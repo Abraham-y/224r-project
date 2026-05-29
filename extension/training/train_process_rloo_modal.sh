@@ -65,7 +65,7 @@ save_dir="${SAVE_DIR:-/vol/checkpoints/process_rloo_checkpoints}"
 wandb_name="${WANDB_NAME:-process_rloo_lr${curr_lr}_bs${batch_size}_gs${group_size}_lam${subgoal_lambda}_alpha${subgoal_alpha}}"
 
 command=(
-    modal run "$PROJECT_ROOT/modal_train.py"
+    modal run --detach "$PROJECT_ROOT/modal_train.py"
     process_rloo
     --subgoal_lambda "$subgoal_lambda"
     --subgoal_alpha "$subgoal_alpha"
