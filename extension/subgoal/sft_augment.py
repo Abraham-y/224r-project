@@ -302,8 +302,8 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--input_dataset", default="Asap7772/cog_behav_all_strategies")
     parser.add_argument("--output_jsonl", default="extension/outputs/cog_behav_subgoal_augmented.jsonl")
-    parser.add_argument("--output_dataset", default=None,
-                        help="HF repo to push to, e.g. your-user/cog_behav_subgoal_augmented")
+    parser.add_argument("--output_dataset", default="prismane16/cog_behav_subgoal_augmented",
+                        help="HF repo to push to (only used with --push). Default is the team repo.")
     parser.add_argument("--limit", type=int, default=None,
                         help="Process only this many rows (useful for dry runs).")
     parser.add_argument("--push", action="store_true",
