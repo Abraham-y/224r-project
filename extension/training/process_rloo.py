@@ -25,14 +25,17 @@ Person A. Day 4-ish.
 from __future__ import annotations
 
 import os
-import runpy
 import sys
 
-# Make sibling imports work whether launched as `python -m extension.training.process_rloo`
-# or `python extension/training/process_rloo.py`.
+# Make sys.path look the way it does when rloo.py is run directly via
+# `python rloo_trainer/rloo.py`: the rloo_trainer/ directory is the script's
+# own dir, and the project root is added so `from rloo_trainer.*` and
+# `from evaluation.*` namespace imports resolve.
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-if _REPO_ROOT not in sys.path:
-    sys.path.insert(0, _REPO_ROOT)
+_RLOO_DIR = os.path.join(_REPO_ROOT, "rloo_trainer")
+for path in (_RLOO_DIR, _REPO_ROOT):
+    if path not in sys.path:
+        sys.path.insert(0, path)
 
 
 # ---------------------------------------------------------------------------
@@ -122,7 +125,14 @@ def main() -> None:
         print("[process_rloo] --subgoal_disable set; using plain outcome reward.", flush=True)
 
     # Hand off to the existing RLOO trainer as if it had been invoked directly.
-    runpy.run_module("rloo_trainer.rloo", run_name="__main__")
+    # We `exec` rather than `runpy.run_module` because runpy doesn't register
+    # rloo_trainer as a namespace package in sys.modules, which breaks rloo.py's
+    # internal `from rloo_trainer.rloo_update_worker import ...` import.
+    rloo_path = os.path.join(_RLOO_DIR, "rloo.py")
+    sys.argv[0] = rloo_path  # mimic `python rloo_trainer/rloo.py`
+    with open(rloo_path) as f:
+        code = compile(f.read(), rloo_path, "exec")
+    exec(code, {"__name__": "__main__", "__file__": rloo_path})
 
 
 if __name__ == "__main__":
