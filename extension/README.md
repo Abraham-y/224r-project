@@ -65,8 +65,9 @@ python -m unittest extension/subgoal/test_parser.py extension/subgoal/test_verif
 | `C_SFT` | `asingh15/qwen-sft-countdown-defaultproj` (HF) | Loaded directly from HF |
 | `C_outcome` | `/vol/checkpoints/rloo_checkpoints/rloo_training/rloo_fixed_v2/latest_checkpoint/model` (Modal volume `default-proj-training`) | Done |
 | `C_outcome` snapshots | `epoch_0_step_{0,10,20,…,90}/model` under the same dir | Done |
-| `C_SFT_aug` | (to train) | Person A, Day 3-4 |
-| `C_process` | (to train) | Person A, Day 4-6 |
+| `prismane16/cog_behav_subgoal_augmented` | HF dataset, subgoal-augmented warm-start traces | Person A, Day 3 (produced by `extension/subgoal/sft_augment.py --push`) |
+| `C_SFT_aug` | `/vol/checkpoints/sft_aug_model/.../model` on the Modal volume | Person A, Day 3-4 (SFT on the augmented dataset) |
+| `C_process` | `/vol/checkpoints/process_rloo_checkpoints/.../latest_checkpoint/model` | Person A, Day 4-6 |
 
 ## Eval JSON schema (what `metrics/` consumes)
 
