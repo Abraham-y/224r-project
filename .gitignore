@@ -40,3 +40,4 @@ extension/outputs/
 
 # Personal/local Claude Code settings
 .claude/settings.local.json
+sft_aug_sanity.json
