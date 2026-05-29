@@ -1,0 +1,42 @@
+# Environment variables (secrets)
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.egg-info/
+dist/
+build/
+
+# IDE
+.vscode/
+.idea/
+
+# Checkpoints and models
+*.pt
+*.pth
+*.bin
+*.safetensors
+sft_model/
+checkpoints/
+
+# Logs
+wandb/
+logs/
+*.log
+
+# Eval / analysis artifacts (large; reproducible from checkpoints)
+eval.json
+eval_*.json
+extension/cache/
+extension/outputs/
+*.npz
+*.pkl
+*.csv
+
+# macOS
+.DS_Store
+
+# Personal/local Claude Code settings
+.claude/settings.local.json
