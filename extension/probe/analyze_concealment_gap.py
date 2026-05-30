@@ -178,32 +178,70 @@ def joint_probe_vs_verbalized(rows: list[dict], cache_dir: str, ckpt: str,
     }
 
 
+def logprob_verbalized_auroc(path: str) -> tuple[float, int, int]:
+    """AUROC of `logit_gap` (logprob(yes) - logprob(no)) vs correctness.
+
+    Rows missing either yes or no in the top-K are dropped.
+    """
+    if not os.path.exists(path):
+        return float("nan"), 0, 0
+    xs, ys = [], []
+    with open(path) as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            r = json.loads(line)
+            g = r.get("logit_gap")
+            if g is None:
+                continue
+            xs.append(float(g))
+            ys.append(1 if float(r["score"]) == 1.0 else 0)
+    xs = np.array(xs); ys = np.array(ys)
+    if len(np.unique(ys)) < 2 or len(np.unique(xs)) < 2:
+        return float("nan"), len(xs), int(ys.sum())
+    return float(roc_auc_score(ys, xs)), len(xs), int(ys.sum())
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--cache_dir", default="extension/cache/probe_cache")
-    parser.add_argument("--sft_confidence", default="extension/cache/confidence/C_SFT_confidence.jsonl")
-    parser.add_argument("--outcome_confidence", default="extension/cache/confidence/C_outcome_confidence.jsonl")
+    parser.add_argument("--sft_logprob",
+                        default="extension/cache/confidence/C_SFT_logprob_confidence.jsonl",
+                        help="Token-logprob JSONL (preferred verbalized signal).")
+    parser.add_argument("--outcome_logprob",
+                        default="extension/cache/confidence/C_outcome_logprob_confidence.jsonl")
+    parser.add_argument("--sft_confidence",
+                        default="extension/cache/confidence/C_SFT_confidence.jsonl",
+                        help="Generated [0,100] elicitation JSONL (likely degenerate).")
+    parser.add_argument("--outcome_confidence",
+                        default="extension/cache/confidence/C_outcome_confidence.jsonl")
     parser.add_argument("--sft_eval", default="eval_sft.json")
     parser.add_argument("--outcome_eval", default="eval.json")
     parser.add_argument("--layer", type=int, default=16)
     args = parser.parse_args()
 
-    paths = {"C_SFT": args.sft_confidence, "C_outcome": args.outcome_confidence}
+    logprob_paths = {"C_SFT": args.sft_logprob, "C_outcome": args.outcome_logprob}
+    confidence_paths = {"C_SFT": args.sft_confidence, "C_outcome": args.outcome_confidence}
     eval_paths = {"C_SFT": args.sft_eval, "C_outcome": args.outcome_eval}
 
     summary = {}
-    for ckpt, path in paths.items():
-        rows = load_confidence_jsonl(path)
-        verb_auc, n_verb, n_correct = (float("nan"), 0, 0)
-        if rows:
-            verb_auc, n_verb, n_correct = verbalized_auroc(rows)
-        if np.isnan(verb_auc):
-            print(f"[{ckpt}] elicited confidences are degenerate (all identical or missing).")
-            print(f"[{ckpt}] falling back to binary keyword-presence AUROC.")
-            verb_auc, n_verb, n_correct = keyword_verbalized_auroc(eval_paths[ckpt])
-            verbal_kind = "keyword-presence (CoT contains any confidence keyword)"
+    for ckpt in ("C_SFT", "C_outcome"):
+        # Preference order: token-logprob > elicited [0,100] > keyword presence.
+        verb_auc, n_verb, n_correct = logprob_verbalized_auroc(logprob_paths[ckpt])
+        if not np.isnan(verb_auc):
+            verbal_kind = "token-logprob (literature standard)"
         else:
-            verbal_kind = "verbalized [0,100] elicitation"
+            rows = load_confidence_jsonl(confidence_paths[ckpt])
+            verb_auc, n_verb, n_correct = (float("nan"), 0, 0)
+            if rows:
+                verb_auc, n_verb, n_correct = verbalized_auroc(rows)
+            if np.isnan(verb_auc):
+                print(f"[{ckpt}] no usable verbalized signal from elicitation; falling back to keyword presence.")
+                verb_auc, n_verb, n_correct = keyword_verbalized_auroc(eval_paths[ckpt])
+                verbal_kind = "keyword-presence (fallback)"
+            else:
+                verbal_kind = "verbalized [0,100] elicitation"
 
         probe_auc = probe_pre_answer_auroc(args.cache_dir, ckpt, args.layer)
         gap = probe_auc - verb_auc
