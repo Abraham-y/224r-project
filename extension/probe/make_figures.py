@@ -326,30 +326,50 @@ def fig5_dynamics_trajectory(dynamics_csv: str, layer: int, outpath: str) -> Non
 def fig7_concealment_gap_bar(cache_dir: str, sft_jsonl: str, outcome_jsonl: str,
                               layer: int, outpath: str,
                               sft_eval: str = "eval_sft.json",
-                              outcome_eval: str = "eval.json") -> None:
+                              outcome_eval: str = "eval.json",
+                              sft_logprob: str = "extension/cache/confidence/C_SFT_logprob_confidence.jsonl",
+                              outcome_logprob: str = "extension/cache/confidence/C_outcome_logprob_confidence.jsonl") -> None:
     """Bar chart: probe AUROC vs verbalized AUROC per checkpoint, gap labeled.
 
-    If the elicitation JSONLs are degenerate, falls back to keyword-presence
-    AUROC computed from the eval JSONs (the documented fallback).
+    Preference for verbalized signal: token-logprob (literature standard) >
+    [0,100] elicitation > keyword-presence fallback.
     """
     from extension.probe.analyze_concealment_gap import (
         load_confidence_jsonl, verbalized_auroc, probe_pre_answer_auroc,
-        keyword_verbalized_auroc,
+        keyword_verbalized_auroc, logprob_verbalized_auroc,
     )
     data = []
     eval_paths = {"C_SFT": sft_eval, "C_outcome": outcome_eval}
-    for ckpt, path in (("C_SFT", sft_jsonl), ("C_outcome", outcome_jsonl)):
-        v_auc = float("nan")
-        if os.path.exists(path):
-            rows = load_confidence_jsonl(path)
-            if rows:
-                v_auc, _n, _nc = verbalized_auroc(rows)
+    elicit_paths = {"C_SFT": sft_jsonl, "C_outcome": outcome_jsonl}
+    logprob_paths = {"C_SFT": sft_logprob, "C_outcome": outcome_logprob}
+    kind_used: dict[str, str] = {}
+    for ckpt in ("C_SFT", "C_outcome"):
+        # Try logprob first.
+        v_auc, _n, _nc = logprob_verbalized_auroc(logprob_paths[ckpt])
+        kind = "logprob"
+        if np.isnan(v_auc):
+            # Then elicited [0,100].
+            if os.path.exists(elicit_paths[ckpt]):
+                rows = load_confidence_jsonl(elicit_paths[ckpt])
+                if rows:
+                    v_auc, _n, _nc = verbalized_auroc(rows)
+                    kind = "elicited"
         if np.isnan(v_auc) and os.path.exists(eval_paths[ckpt]):
             v_auc, _n, _nc = keyword_verbalized_auroc(eval_paths[ckpt])
+            kind = "keyword"
         p_auc = probe_pre_answer_auroc(cache_dir, ckpt, layer)
         if np.isnan(v_auc) or np.isnan(p_auc):
             continue
+        kind_used[ckpt] = kind
         data.append((ckpt, v_auc, p_auc))
+    # Add the source-of-verbalized note to the figure title.
+    sources = sorted(set(kind_used.values()))
+    src_label = (
+        "token-logprob" if sources == ["logprob"]
+        else ("elicited" if sources == ["elicited"]
+              else ("keyword-presence" if sources == ["keyword"]
+                    else " / ".join(sources)))
+    )
     if not data:
         return
     fig, ax = plt.subplots(figsize=(7.5, 4.5), dpi=160)
@@ -375,7 +395,10 @@ def fig7_concealment_gap_bar(cache_dir: str, sft_jsonl: str, outcome_jsonl: str,
     ax.set_xticklabels([d[0] for d in data])
     ax.set_ylim(0, 1)
     ax.set_ylabel("AUROC vs (final answer correct)")
-    ax.set_title(f"Concealment gap = probe AUROC - verbalized AUROC (L{layer})")
+    ax.set_title(
+        f"Concealment gap = probe AUROC - verbalized AUROC (L{layer})\n"
+        f"verbalized signal source: {src_label}"
+    )
     ax.legend(frameon=False, loc="lower right", fontsize=9)
     style_axes(ax)
     fig.tight_layout()
