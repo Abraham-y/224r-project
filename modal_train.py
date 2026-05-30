@@ -239,6 +239,21 @@ def run_elicit_confidence(args: list[str]) -> str:
     return _run_training("extension/probe/elicit_verbalized_confidence.py", args)
 
 
+@app.function(
+    image=base_image,
+    gpu=GPU_CONFIG,
+    cpu=CPU_COUNT,
+    timeout=TIMEOUT_SECONDS,
+    startup_timeout=STARTUP_TIMEOUT_SECONDS,
+    volumes={str(REMOTE_VOLUME_ROOT): TRAINING_VOLUME},
+    secrets=_build_secret_list(),
+)
+def run_token_logprob_confidence(args: list[str]) -> str:
+    # Token-logprob verbalized confidence (literature standard for
+    # non-chat-tuned models).
+    return _run_training("extension/probe/elicit_token_logprob_confidence.py", args)
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Launch one of the existing training entrypoints on Modal.",
@@ -247,7 +262,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "trainer",
         choices=(
             "sft", "ipo", "rloo", "process_rloo", "eval",
-            "probe_cache", "elicit_confidence",
+            "probe_cache", "elicit_confidence", "token_logprob_confidence",
         ),
     )
     parser.add_argument(
@@ -282,6 +297,8 @@ def main(*raw_args: str) -> None:
         call = run_probe_cache.spawn(trainer_args)
     elif args.trainer == "elicit_confidence":
         call = run_elicit_confidence.spawn(trainer_args)
+    elif args.trainer == "token_logprob_confidence":
+        call = run_token_logprob_confidence.spawn(trainer_args)
     else:
         call = run_rloo.spawn(trainer_args)
 
