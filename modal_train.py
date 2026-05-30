@@ -210,11 +210,29 @@ def run_eval(eval_args: list[str]) -> str:
     return _run_eval(eval_args)
 
 
+@app.function(
+    image=base_image,
+    gpu=GPU_CONFIG,
+    cpu=CPU_COUNT,
+    timeout=TIMEOUT_SECONDS,
+    startup_timeout=STARTUP_TIMEOUT_SECONDS,
+    volumes={str(REMOTE_VOLUME_ROOT): TRAINING_VOLUME},
+    secrets=_build_secret_list(),
+)
+def run_probe_cache(cache_args: list[str]) -> str:
+    # Extension-side hidden-state caching for the probe pipeline.
+    # Outputs .npz / .meta.json files to /vol/probe_cache by default.
+    return _run_training("extension/probe/cache_hidden_states.py", cache_args)
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Launch one of the existing training entrypoints on Modal.",
     )
-    parser.add_argument("trainer", choices=("sft", "ipo", "rloo", "process_rloo", "eval"))
+    parser.add_argument(
+        "trainer",
+        choices=("sft", "ipo", "rloo", "process_rloo", "eval", "probe_cache"),
+    )
     parser.add_argument(
         "trainer_args",
         nargs=argparse.REMAINDER,
@@ -243,6 +261,12 @@ def main(*raw_args: str) -> None:
         call = run_ipo.spawn(trainer_args)
     elif args.trainer == "process_rloo":
         call = run_process_rloo.spawn(trainer_args)
+    elif args.trainer == "probe_cache":
+        call = run_probe_cache.spawn(trainer_args)
     else:
         call = run_rloo.spawn(trainer_args)
+
+    print(f"Spawned {args.trainer}. Function call ID: {call.object_id}")
+    print("Runs on Modal even if this client disconnects.")
+    print("Monitor on the Modal dashboard or in Weights & Biases.")
 
