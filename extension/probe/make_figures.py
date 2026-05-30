@@ -323,10 +323,69 @@ def fig5_dynamics_trajectory(dynamics_csv: str, layer: int, outpath: str) -> Non
 # ---------------------------------------------------------------------------
 
 
+def fig7_concealment_gap_bar(cache_dir: str, sft_jsonl: str, outcome_jsonl: str,
+                              layer: int, outpath: str) -> None:
+    """Bar chart: probe AUROC vs verbalized AUROC per checkpoint, gap labeled.
+
+    Only fires if both confidence JSONL files exist.
+    """
+    if not (os.path.exists(sft_jsonl) and os.path.exists(outcome_jsonl)):
+        print(f"  skipping fig7 (confidence JSONL not found)")
+        return
+    # Defer heavy import
+    from extension.probe.analyze_concealment_gap import (
+        load_confidence_jsonl, verbalized_auroc, probe_pre_answer_auroc,
+    )
+    data = []
+    for ckpt, path in (("C_SFT", sft_jsonl), ("C_outcome", outcome_jsonl)):
+        rows = load_confidence_jsonl(path)
+        if not rows:
+            continue
+        v_auc, _n, _nc = verbalized_auroc(rows)
+        p_auc = probe_pre_answer_auroc(cache_dir, ckpt, layer)
+        data.append((ckpt, v_auc, p_auc))
+    if not data:
+        return
+    fig, ax = plt.subplots(figsize=(7.5, 4.5), dpi=160)
+    x = np.arange(len(data))
+    width = 0.36
+    verbal_vals = [d[1] for d in data]
+    probe_vals = [d[2] for d in data]
+    b1 = ax.bar(x - width / 2, verbal_vals, width, color="#dba24c",
+                label="verbalized confidence AUROC")
+    b2 = ax.bar(x + width / 2, probe_vals, width, color="#2f6db5",
+                label="probe AUROC at </think>")
+    ax.bar_label(b1, fmt="%.2f", padding=2, fontsize=9)
+    ax.bar_label(b2, fmt="%.2f", padding=2, fontsize=9)
+    for i, (_, vv, pv) in enumerate(data):
+        gap = pv - vv
+        ax.annotate(
+            f"gap = {gap:+.2f}", xy=(i, max(vv, pv) + 0.04),
+            ha="center", fontsize=10, fontweight="bold",
+            color=("#2f6db5" if gap > 0 else "#c45252"),
+        )
+    ax.axhline(0.5, color="grey", linestyle=":", linewidth=0.9, label="chance")
+    ax.set_xticks(x)
+    ax.set_xticklabels([d[0] for d in data])
+    ax.set_ylim(0, 1)
+    ax.set_ylabel("AUROC vs (final answer correct)")
+    ax.set_title(f"Concealment gap = probe AUROC - verbalized AUROC (L{layer})")
+    ax.legend(frameon=False, loc="lower right", fontsize=9)
+    style_axes(ax)
+    fig.tight_layout()
+    fig.savefig(outpath)
+    plt.close(fig)
+    print(f"  wrote {outpath}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--cache_dir", default="extension/cache/probe_cache")
     parser.add_argument("--dynamics_csv", default="extension/outputs/dynamics_auroc.csv")
+    parser.add_argument("--sft_confidence",
+                        default="extension/cache/confidence/C_SFT_confidence.jsonl")
+    parser.add_argument("--outcome_confidence",
+                        default="extension/cache/confidence/C_outcome_confidence.jsonl")
     parser.add_argument("--out_dir", default="extension/outputs/figures")
     parser.add_argument("--layer", type=int, default=16)
     args = parser.parse_args()
@@ -342,6 +401,9 @@ def main() -> None:
                          os.path.join(args.out_dir, "fig4_per_keyword_bar.png"))
     fig5_dynamics_trajectory(args.dynamics_csv, args.layer,
                              os.path.join(args.out_dir, "fig5_dynamics_trajectory.png"))
+    fig7_concealment_gap_bar(args.cache_dir, args.sft_confidence,
+                             args.outcome_confidence, args.layer,
+                             os.path.join(args.out_dir, "fig7_concealment_gap.png"))
 
 
 if __name__ == "__main__":
