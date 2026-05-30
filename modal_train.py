@@ -225,13 +225,30 @@ def run_probe_cache(cache_args: list[str]) -> str:
     return _run_training("extension/probe/cache_hidden_states.py", cache_args)
 
 
+@app.function(
+    image=base_image,
+    gpu=GPU_CONFIG,
+    cpu=CPU_COUNT,
+    timeout=TIMEOUT_SECONDS,
+    startup_timeout=STARTUP_TIMEOUT_SECONDS,
+    volumes={str(REMOTE_VOLUME_ROOT): TRAINING_VOLUME},
+    secrets=_build_secret_list(),
+)
+def run_elicit_confidence(args: list[str]) -> str:
+    # Verbalized-confidence elicitation (concealment-gap measurement).
+    return _run_training("extension/probe/elicit_verbalized_confidence.py", args)
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Launch one of the existing training entrypoints on Modal.",
     )
     parser.add_argument(
         "trainer",
-        choices=("sft", "ipo", "rloo", "process_rloo", "eval", "probe_cache"),
+        choices=(
+            "sft", "ipo", "rloo", "process_rloo", "eval",
+            "probe_cache", "elicit_confidence",
+        ),
     )
     parser.add_argument(
         "trainer_args",
@@ -263,6 +280,8 @@ def main(*raw_args: str) -> None:
         call = run_process_rloo.spawn(trainer_args)
     elif args.trainer == "probe_cache":
         call = run_probe_cache.spawn(trainer_args)
+    elif args.trainer == "elicit_confidence":
+        call = run_elicit_confidence.spawn(trainer_args)
     else:
         call = run_rloo.spawn(trainer_args)
 
