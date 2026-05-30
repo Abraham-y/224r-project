@@ -65,8 +65,10 @@ def main() -> None:
     parser.add_argument("--output_json", required=True)
     parser.add_argument("--max_responses_per_prompt", type=int, default=16)
     parser.add_argument("--max_model_len", type=int, default=2048)
-    parser.add_argument("--logprobs_top_k", type=int, default=200,
-                        help="vLLM top-K logprobs to request per generated token.")
+    parser.add_argument("--logprobs_top_k", type=int, default=20,
+                        help="vLLM top-K logprobs to request per generated token. "
+                             "vLLM caps this at 20 by default; the yes/no tokens are "
+                             "near-certainly within the top 20 for a verdict prompt.")
     args = parser.parse_args()
 
     from vllm import LLM, SamplingParams  # heavy import; defer
