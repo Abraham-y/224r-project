@@ -35,10 +35,10 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import roc_auc_score
 
 
-# .npz filenames look like e.g. "C_outcome_l16_assertion.npz" or
-# "C_SFT_l12_pre_answer.npz". Use a regex that handles the underscore-rich
-# position name.
-_FILENAME_RE = re.compile(r"^(?P<ckpt>[^_]+(?:_[^_]+)?)_l(?P<layer>\d+)_(?P<kind>pre_answer|assertion|neutral)\.npz$")
+# .npz filenames look like e.g. "C_outcome_l16_assertion.npz",
+# "C_SFT_l12_pre_answer.npz", or (for dynamics) "C_outcome_step_30_l16_neutral.npz".
+# Non-greedy ckpt match anchored to a `_l<digits>_<kind>.npz` suffix handles all of these.
+_FILENAME_RE = re.compile(r"^(?P<ckpt>.+?)_l(?P<layer>\d+)_(?P<kind>pre_answer|assertion|neutral)\.npz$")
 
 
 def parse_filename(name: str) -> tuple[str, int, str] | None:
