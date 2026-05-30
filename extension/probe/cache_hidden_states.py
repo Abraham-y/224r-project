@@ -171,8 +171,11 @@ def main() -> None:
             # out.hidden_states is a tuple (n_layers + 1) of (1, T, hidden_dim) bf16.
             hidden_states = out.hidden_states
 
-            # --- pre_answer: hidden state at </think> token -------------------
-            think_close_char = full_text.find(THINK_CLOSE)
+            # --- pre_answer: hidden state at the response's </think> token ---
+            # The chat-templated prompt itself contains "<think> </think>" in
+            # its instructions, so we have to search *after* the prompt to
+            # find the model's actual closing tag.
+            think_close_char = full_text.find(THINK_CLOSE, prompt_end_char)
             think_close_tok: int | None = None
             if think_close_char >= 0:
                 think_close_tok = char_to_token_index(offsets, think_close_char)
@@ -187,11 +190,16 @@ def main() -> None:
                          "tok_idx": think_close_tok}
                     )
 
-            # --- assertion: per-keyword positions inside the <think> body ----
+            # --- assertion: per-keyword positions inside the response's
+            # first <think> body (between the prompt and the first </think>
+            # in the response). Restricting to the response prevents matches
+            # of instruction-side text and keeps char offsets aligned with
+            # `offsets` (which are full_text-indexed).
             think_body_end_char = think_close_char if think_close_char >= 0 else len(full_text)
-            think_body = full_text[:think_body_end_char]
-            assertion_hits = find_assertion_char_positions(think_body, CONFIDENT_KEYWORDS)
-            assertion_hits = assertion_hits[: args.max_assertions_per_response]
+            response_think_body = full_text[prompt_end_char:think_body_end_char]
+            raw_hits = find_assertion_char_positions(response_think_body, CONFIDENT_KEYWORDS)
+            raw_hits = raw_hits[: args.max_assertions_per_response]
+            assertion_hits = [(c + prompt_end_char, kw) for c, kw in raw_hits]
 
             assertion_toks: list[int] = []
             for char_idx, kw in assertion_hits:
