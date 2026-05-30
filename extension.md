@@ -2,7 +2,7 @@
 
 *How RL reward structure reshapes the gap between what a small reasoner knows internally and what it says out loud.*
 
-> **Status:** IPO and RLOO core implementations complete; SFT baseline uses `asingh15/qwen-sft-countdown-defaultproj` (Anikait Singh's Countdown SFT) in lieu of a team-trained SFT. `C_outcome` trained with intermediate checkpoints saved every 10 steps. Extension build begins now.
+> **Status:** Scope locked to probe-as-measurement layer on `C_SFT` and `C_outcome` (both already trained). `C_process` was attempted and is retained as a documented negative result; no further training planned. SFT baseline uses `asingh15/qwen-sft-countdown-defaultproj` (Anikait Singh's Countdown SFT) in lieu of a team-trained SFT. `C_outcome` trained with intermediate checkpoints saved every 10 steps.
 > **Team:** 2 people. Combined Modal budget ≈ $700.
 > **This file:** the consolidated source of truth. Supplementary docs (`build_plan.md`, `proposal_draft.md`, `next_steps_from_neighbors.md`) are kept but defer to this one when they conflict.
 
@@ -10,9 +10,9 @@
 
 ## TL;DR
 
-We use Countdown's exact step-checkable verifier as an instrument to ask whether the choice of RL reward structure (outcome-only versus dense exact process supervision) creates or shapes the recently documented gap between a small reasoner's *internal* representation of correctness and its *verbalized* confidence. Two recent neighbor papers explicitly flag this question as their open future work. We answer it with a three-checkpoint controlled comparison, three measurement layers, and a cross-checkpoint probe transfer analysis that decomposes the gap into representation drift versus signal suppression.
+We use Countdown's exact-verifier setting to measure the gap between what a small reasoner *internally* represents about correctness and what it *verbalizes*, on two RL checkpoints we already have (`C_SFT`, `C_outcome`). The headline measurement is a linear-probe concealment gap at the trace-final position plus a per-position probe analysis at confidence-asserting token sites ("Perfect!", "this works", "got it"). Cross-checkpoint probe transfer (2×2) decomposes the gap into representation drift versus signal suppression. A failed annotation-only process-reward arm (`C_process`) is documented as a negative result whose mechanism — surface declarations causally disconnected from computation — confirms a recent theoretical prediction.
 
-You have `C_outcome` trained with every-10-step snapshots, and you use Anikait's checkpoint as `C_SFT`. The build from here is the subgoal infrastructure, `C_process` training, the probe pipeline, and the cross-checkpoint analysis. Section 2.3 is resolved: intermediate checkpoints exist, so Layer C (temporal axis) is doable without re-training.
+No new training runs. No new tokens. No probe-aware reward, no introspection token, no functional tokens. The project is anchored entirely on the probe layer plus the behavioral evidence already collected. Section 2.3 (intermediate `C_outcome` checkpoints exist) means Layer C (temporal axis) is doable without re-training.
 
 ---
 
@@ -22,23 +22,27 @@ You have `C_outcome` trained with every-10-step snapshots, and you use Anikait's
 
 Recent interpretability work has shown that reasoning models often *internally* represent that they will produce a wrong answer while *verbally* expressing high confidence. A linear probe on hidden states can predict correctness with AUROC 0.95 while verbalized confidence achieves only 0.67 on the same traces (Yuan et al. 2026). The model knows things it does not say.
 
-All existing work studies this gap on *fixed*, already-trained models. Our question is the origin question: **does RL training create this concealment gap, and does the reward structure (outcome-only versus dense exact process supervision) determine whether the gap grows or shrinks?** Countdown is uniquely suited because its rule-based verifier gives noise-free correctness labels for both individual subgoals and final answers. Both the probe labels and the process reward are driven by the same exact ground truth, removing the label noise that has confounded every related measurement on natural-language math benchmarks.
+All existing work studies this gap on *fixed*, already-trained models. Our scoped question is the **outcome-RL origin question**: does outcome-only RLOO training create or amplify the concealment gap relative to the SFT initialization? We study this on `C_SFT` and `C_outcome` — both already trained — at the exact-verifier Countdown setting where correctness labels are noise-free at every position in the trace. The exact verifier gives us per-rollout ground truth at zero label noise, so the *measurement* of the gap is uncontaminated even though the *intervention* (outcome reward) is the standard one.
+
+We additionally ask **where in the trace** the gap concentrates: at the trace-final position (the standard report), or at specific epistemic-confidence assertions in the chain of thought ("Perfect!", "this works", "got it") — positions where the surface expresses high confidence and where, if the gap is real, the divergence between internal probe and verbal assertion should be sharpest.
 
 ### 1.2 The honest novelty framing
 
 I have been inconsistent about this across the planning conversation. The committed version:
 
-The *question* we ask is novel and explicitly flagged as open by recent neighbors. Yuan et al.'s limitations section names RL from probe feedback and training-time intervention on the concealment gap as not tested. Anand et al.'s discussion names the training-dynamics origin of self-verification as a promising unexplored avenue. The *methodology* we assemble (linear probes, exact subgoal verification, RLOO, cross-checkpoint transfer analysis) is from existing work. The *result*, when we have it, will be a new empirical finding no current paper contains. This is workshop-eligible work where execution and result legibility determine acceptance, not the novelty of the question itself.
+The *question* we ask is novel and explicitly flagged as open by recent neighbors. Yuan et al.'s limitations section names RL from probe feedback and training-time intervention on the concealment gap as not tested. Anand et al.'s discussion names the training-dynamics origin of self-verification as a promising unexplored avenue. The *methodology* we assemble (linear probes, exact verification at the outcome level, RLOO, cross-checkpoint transfer analysis, per-position probe analysis at confidence-asserting tokens) is from existing work. The *result*, when we have it, will be a new empirical finding no current paper contains. This is workshop-eligible work where execution and result legibility determine acceptance, not the novelty of the question itself.
 
-What we are not claiming: that we discovered the concealment phenomenon (Yuan et al. did, three weeks ago), or that we invented probe-based analysis (Anand et al. and others did), or that we propose a new training mechanism. What we are claiming: that we use Countdown's exact-verifier setting to run a controlled study no one has run, answering a question two of our closest neighbors explicitly named as their open future work.
+What we are not claiming: that we discovered the concealment phenomenon (Yuan et al. did), that we invented probe-based analysis (Anand et al. and others did), or that we propose a new training mechanism. What we are claiming: that we use Countdown's exact-verifier setting to measure the concealment gap on outcome-RLOO at small scale, with a position-resolved probe analysis at confidence-asserting tokens, and that we report a failed annotation-only process-reward arm as a complementary negative result.
+
+**Why no new tokens, no new arms.** Three rounds of recursive literature search converged on the same pattern. Functional tokens (`<clean>`, `<verify>`, `<exit>`, `<commit>`, `<introspect>`) were a novel area in 2024 and are now a saturated subfield in 2026. Probe-as-reward is partially scooped by Papadatos & Freedman ("Linear Probe Penalties Reduce LLM Sycophancy") and Taufeeque et al. ("The Obfuscation Atlas"). Step-grounded confidence as a novel mechanism is scooped by MMBoundary, SPAE, and Temporalizing Confidence. Trajectory drift as a headline is heavily occupied by Huang et al. (ICLR 2024, "LLMs Cannot Self-Correct Reasoning Yet"), SCoRe, and three 2026 papers. The contribution this project makes lives at the *intersection* of (exact verifier × 0.5B scale × outcome-RL intervention × probe-based internal measurement × training dynamics × position-resolved probing at confidence-asserting tokens), and the probe-as-measurement layer is rich enough on its own. Adding more arms doesn't add proportional novelty and runs into engineering risk on a tight timeline. The negative result on `C_process` is itself a contribution: it confirms Strategic Information Allocation's prediction that annotation-only tokens cannot route capability into a small reasoner.
 
 ### 1.3 The bet (three falsifiable predictions)
 
-- **H1.** After SFT, probe correctness-AUROC and verbalized-confidence-AUROC are similar. The model says roughly what it knows.
-- **H2.** After outcome-only RLOO, accuracy rises (0.3 to 0.5+ per spec), but the concealment gap *widens*. The model becomes more confident in assertions decoupled from its internal correctness representation.
-- **H3.** After process-reward RLOO using the exact subgoal verifier, the gap partially closes but a residual persists, with the residual explained by reward hacking of the subgoal channel.
+- **H1.** On `C_SFT`, probe-correctness AUROC at the trace-final position and verbalized-confidence AUROC are similar. The SFT model says roughly what it internally represents.
+- **H2.** On `C_outcome`, accuracy rises (28.6% → 53.5% measured), but the trace-final concealment gap (probe AUROC − verbalized AUROC) *widens*. The outcome-RL'd model becomes more confident in assertions decoupled from its internal correctness representation.
+- **H3.** The concealment gap concentrates at epistemic-confidence token positions (locations of "Perfect!", "this works", "got it", "the answer is", "verified") more than at neutral positions, measurable as `probe_AUROC(at confidence-asserting token) > probe_AUROC(at neutral token)` and as a larger gap-magnitude at those positions vs. the trace-final default.
 
-Any falsification is itself a publishable result. The most publishable outcome is H3 failing (process reward does not close the gap), which generalizes Yuan et al.'s "diagnostic not causal" finding to dense exact process supervision.
+Any falsification is itself a publishable result. The most publishable single outcome is H3 holding: it would be the first position-resolved evidence that the concealment gap is *spatially localized* at verbalized confidence sites, not uniformly distributed across the trace.
 
 ### 1.4 Why this satisfies the class
 
@@ -53,64 +57,66 @@ The CS 224R spec is explicit: the extension is graded on "doing science to figur
 - `C_SFT` = `asingh15/qwen-sft-countdown-defaultproj` (Anikait Singh's Qwen2.5-0.5B Countdown SFT baseline). Team-trained SFT was not run; this checkpoint serves as the SFT baseline. Test-set pass@1 = 28.6%, pass@16 = 78.0%.
 - IPO trainer → IPO checkpoint (milestone-only, not part of the science).
 - RLOO trainer with outcome reward → `C_outcome` at `/vol/checkpoints/rloo_checkpoints/rloo_training/rloo_fixed_v2/latest_checkpoint/model` on the Modal volume. Intermediate snapshots persisted at steps 0, 10, 20, …, 90. Test-set pass@1 = 53.5%, pass@16 = 72.0% (sharpening: pass@1 up 24.9 pts vs SFT; pass@16 down 6 pts).
+- `C_process` was trained (RLOO from `C_SFT_aug` with composite outcome + annotation-only subgoal reward) and is retained on disk as data for the failed-intervention analysis. It **hurt performance relative to `C_outcome`** and produced rollouts where `<subgoal>` declarations were causally disconnected from the computation that followed them. See the Appendix for details. **No further training on this arm is planned.**
 
 ### 2.2 To do (all extension, AI assistance permitted)
 
-In rough dependency order:
+In rough dependency order — anchored entirely on the probe layer plus already-collected behavioral evidence. No new training:
 
-1. Behavioral metric harness (Layer A)
-2. Subgoal infrastructure (parser, exact verifier, reward composition, SFT augmentation)
-3. Train `C_process`
-4. Probe pipeline (Layer B)
-5. Training-dynamics snapshots (Layer C)
-6. Cross-checkpoint transfer analysis
-7. Optional Phase 3B: probe-aware reward with KL sweep
+1. Behavioral metric harness (Layer A) on `C_SFT` and `C_outcome`.
+2. Probe pipeline (Layer B): hidden-state caching, probe training, evaluation.
+3. Per-position probe analysis at confidence-asserting token sites (new — supports H3).
+4. Cross-checkpoint probe transfer (2×2: `C_SFT` ↔ `C_outcome`).
+5. Training-dynamics snapshots (Layer C) over the saved `C_outcome` 10-step checkpoints.
+6. Retrospective analysis of `C_process` rollouts for the failed-intervention appendix (no training, just measurement against existing eval JSON).
+
+The subgoal infrastructure (`extension/subgoal/*`) and the process-reward launcher (`extension/training/process_rloo.py`) remain in the repository for retrospective traceability but are no longer development targets.
 
 ### 2.3 The one urgent decision — RESOLVED
 
-`C_outcome` (run `rloo_fixed_v2`) saved persistent checkpoints at steps 0, 10, 20, …, 90 plus `latest_checkpoint` on the Modal volume. This is *finer* than the originally planned ~50-step granularity. **Layer C training dynamics is doable without re-training; risk R7 is closed.** Proceed with the build.
+`C_outcome` (run `rloo_fixed_v2`) saved persistent checkpoints at steps 0, 10, 20, …, 90 plus `latest_checkpoint` on the Modal volume. This is *finer* than the originally planned ~50-step granularity. **Layer C training dynamics is doable on `C_outcome` without re-training; risk R7 is closed.** Proceed with the build.
 
 ---
 
 ## 3. Experimental Design
 
-### 3.1 Three checkpoints
+### 3.1 Checkpoints
 
-| Checkpoint | What it is | Status |
+| Checkpoint | What it is | Role |
 |---|---|---|
-| `C_SFT` | `asingh15/qwen-sft-countdown-defaultproj` (Anikait Singh's Qwen2.5-0.5B Countdown SFT). Used as SFT baseline in lieu of team-trained SFT. | In use |
-| `C_outcome` | RLOO from `C_SFT`, outcome reward only (0.0 / 0.1 / 1.0 per spec). Persistent snapshots every 10 steps. | Done |
-| `C_SFT_aug` | `C_SFT` continued-SFT on subgoal-augmented `Asap7772/cog_behav_all_strategies`. Initialization for `C_process`. | To build |
-| `C_process` | RLOO from `C_SFT_aug`, outcome + exact-verifier subgoal reward | To build |
+| `C_SFT` | `asingh15/qwen-sft-countdown-defaultproj` (Anikait Singh's Qwen2.5-0.5B Countdown SFT). Used as SFT baseline. | **Primary** — anchor for H1, baseline arm of probe layer. |
+| `C_outcome` | RLOO from `C_SFT`, outcome reward only (0.0 / 0.1 / 1.0 per spec). Persistent snapshots every 10 steps. | **Primary** — anchor for H2 and H3, RL-trained arm of probe layer. |
+| `C_process` | RLOO with composite outcome + annotation-only subgoal reward, initialized from `C_SFT_aug`. | **Secondary, failed-intervention analysis only.** Documented in the Appendix; not part of the headline. |
 
 The IPO checkpoint exists for milestone compliance and does not participate in the science.
 
 ### 3.2 Three measurement layers
 
-Applied to all three checkpoints, and to intermediate snapshots of the RL arms.
+Applied to `C_SFT` and `C_outcome`, and to the saved 10-step `C_outcome` snapshots for Layer C.
 
-**Layer A: Behavioral.** Free, runs on existing checkpoints.
+**Layer A: Behavioral.** Free, runs on existing rollouts.
 
 1. Accuracy (overall, hard mult/div subset).
 2. **Reasoning-answer consistency rate.** Parse the last arithmetic expression the CoT endorses, parse the `<answer>` expression, evaluate both, check match. Quantifies El et al.'s and Hu/Wang's eyeballed Failure Mode 1.
-3. **Confident-wrong rate.** Fraction of wrong rollouts where the CoT contains a high-confidence assertion ("this works", "verified", "the answer is").
+3. **Confident-wrong rate.** Fraction of wrong rollouts where the CoT contains a high-confidence assertion ("this works", "verified", "got it", "perfect", "the answer is").
 4. **ECE on verbalized confidence.** Prompt for confidence in a separate elicitation call, bin, reliability diagram.
 5. **Verbalized confidence AUROC.** Treat verbalized confidence as a binary classifier for correctness.
-6. **Step-grounded verbalized confidence (C_process only).** Elicit confidence per declared subgoal, calibrate against the exact subgoal verifier. Extends RLCR's flagged limitation (uncertainty reasoning stays generic, untied to specific steps). Adjacent scoopers (MMBoundary, SPAE, Temporalizing Confidence) work in multimodal, advantage-estimation, or non-RL settings respectively; our intersection (verbalized per-step confidence on text-only exact-verifier task, calibrated across reward regimes) is unoccupied.
+6. **Step-grounded verbalized confidence (C_outcome only, as a single-arm measurement).** Elicit confidence per declared computational step in the CoT (not per `<subgoal>` tag), calibrate against the exact verifier. This is now a *single-arm characterization* of `C_outcome`, not a process-vs-outcome comparison. Adjacent work in multimodal (MMBoundary), advantage-estimation (SPAE), and non-RL settings (Temporalizing Confidence) means we cannot claim it as a *novel mechanism*; we report it only as an additional descriptive metric on the outcome arm.
 
 **Layer B: Internal.** The probe.
 
-1. **Probe correctness AUROC** trained per checkpoint at the `</think>` position, predicting final-answer correctness.
-2. **Concealment gap** = Probe AUROC − Verbalized AUROC. The headline quantity.
+1. **Probe correctness AUROC** trained per checkpoint at the `</think>` position, predicting final-answer correctness. Reported as the trace-final default.
+2. **Concealment gap** = Probe AUROC − Verbalized AUROC. The headline quantity at the trace-final position.
 3. **Probe earliness.** Earliest token position at which probe AUROC exceeds 0.7.
 4. **Concealment-by-example.** Fraction of confident-wrong rollouts where the probe at `</think>` correctly classifies "wrong".
-5. **Within-problem Cohen's d.** Multiple traces per problem at temperature 0.7; probe-score effect size for correct vs wrong traces from the same problem. Yuan et al. ran this on standard models but had n=14 mixed-outcome problems on their RL model; with cheap Countdown rollouts we run a properly powered version on all three checkpoints.
+5. **Within-problem Cohen's d.** Multiple traces per problem at temperature 0.7; probe-score effect size for correct vs wrong traces from the same problem. Yuan et al. ran this on standard models but had n=14 mixed-outcome problems on their RL model; with cheap Countdown rollouts we run a properly powered version on `C_SFT` and `C_outcome`.
+6. **Per-position probe analysis at confidence-asserting token sites (new — supports H3).** Locate every occurrence of an assertion in the CoT matching the keyword set `{"Perfect", "this works", "got it", "the answer is", "verified"}`. At each such position, extract the hidden state and apply the trained probe. Report: probe AUROC at confidence-asserting positions vs. matched neutral positions sampled from the same traces; gap-magnitude at confidence-asserting positions vs. trace-final; alignment between probe prediction at the assertion and the assertion's implied confidence ("got it" reads as confident-correct; the probe's correctness prediction at that token is the contrast).
 
-**Layer C: Training dynamics.** Snapshot every ~50 RLOO steps, recompute Layers A and B on each. Plot the trajectory of the concealment gap during training. Anand et al. explicitly flag this temporal view as unexplored.
+**Layer C: Training dynamics.** Replay Layers A and B on each saved 10-step snapshot of `C_outcome`. Plot the trajectory of the trace-final concealment gap, of the gap at confidence-asserting positions, and of accuracy over training steps. Anand et al. explicitly flag this temporal view as unexplored.
 
 ### 3.3 The headline plot
 
-X-axis: training step. Y-axis: AUROC. Two lines per RL arm (verbalized confidence and internal probe). Shaded gap. If the gap widens during outcome-RLOO and stabilizes or narrows during process-RLOO, you have the paper in one figure.
+X-axis: `C_outcome` training step (0, 10, …, 90, final). Y-axis: AUROC. Three lines: probe AUROC at `</think>`, verbalized-confidence AUROC, probe AUROC at confidence-asserting token positions. Shaded gap between the trace-final probe and verbalized lines. If (a) the trace-final gap widens during outcome-RLOO and (b) the confidence-asserting-position probe AUROC sits above the trace-final probe AUROC by an interpretable margin, the paper lands in one figure.
 
 ---
 
@@ -136,60 +142,18 @@ Following Yuan et al. for direct comparability.
 
 The probe is **trained per checkpoint**. Each model gets its own probe trained on its own activations. The single exception is the cross-checkpoint transfer experiment (Section 4.5), which by design uses one probe across multiple checkpoints.
 
-### 4.2 The process reward
+### 4.2 — 4.4
 
-Per rollout:
+*Moved to the Appendix "Failed Intervention: Annotation-Only Process Reward". The original §§4.2 (process reward formula), 4.3 (subgoal token format and exact verifier), and 4.4 (SFT augmentation) are preserved there in full, alongside what we observed empirically and the mechanistic explanation.*
 
-```
-R = R_outcome + λ * R_subgoal
+### 4.5 Cross-checkpoint probe transfer (2×2)
 
-R_outcome ∈ {0.0, 0.1, 1.0}                        # per default project spec
-R_subgoal = (n_valid_and_achieved − α * n_invalid) # capped at [0, 1]
-            / max(n_declared, 1)
-```
-
-Defaults: `λ = 0.3` (subgoal bonus cannot dominate correctness), `α = 1.0`. Small sweep on both during validation.
-
-### 4.3 Subgoal token format and exact verifier
-
-The model emits `<subgoal>` declarations during reasoning:
-
-```
-<subgoal> reach 60 from [3, 4, 5] </subgoal>
-3 * 4 = 12 ... no. 4 * 5 = 20, 20 * 3 = 60. reached 60.
-<subgoal> reach 68 from [60, 8] </subgoal>
-60 + 8 = 68. done.
-```
-
-A subgoal is a `(target_value, available_subset)` pair. Two exact checks:
-
-- **Validity.** Is `target_value` reachable from `available_subset` using +, −, ×, ÷? Cheap exhaustive enumeration over the 3-4 element subset.
-- **Achievement.** Does the model's subsequent reasoning before the next subgoal (or before `</think>`) actually compute `target_value` using only `available_subset`? Parse arithmetic in the segment, evaluate, check.
-
-Both checks require no learned model. This is the cleanliness property that differentiates our process reward from SGVR, PROF, PROGRS, all of which use learned PRMs.
-
-### 4.4 SFT augmentation
-
-`C_process` cannot be trained directly via RL because the base model never emits subgoals (so the subgoal reward term is dead). We first SFT on an augmented dataset where subgoal declarations are inserted at natural decomposition points in the existing expert traces.
-
-Recipe (mirrors SGVR's milestone augmentation and El et al.'s `<clean>` augmentation):
-
-1. Take each trace in `Asap7772/cog_behav_all_strategies`.
-2. Parse arithmetic expressions in the trace.
-3. Identify intermediate values that appear in the final expression.
-4. Insert `<subgoal>` declarations announcing each intermediate before it is computed.
-5. Validate that the augmented trace is syntactically clean (hand-spot-check 50).
-
-Output is a new SFT dataset. SFT on it produces `C_SFT_aug`, which is the initialization for `C_process`'s RL run.
-
-### 4.5 Cross-checkpoint probe transfer
-
-Train probe on `C_SFT` activations. Evaluate the same probe (no retraining) on `C_outcome` and `C_process` activations. Repeat for probes trained on each checkpoint. Produces a 3×3 matrix of AUROCs.
+Train probe on `C_SFT` activations. Evaluate the same probe (no retraining) on `C_outcome` activations. Repeat with a probe trained on `C_outcome` evaluated on `C_SFT`. Produces a 2×2 matrix of AUROCs.
 
 - Degraded off-diagonal AUROC → representation drift (in the sense Taufeeque et al. found in coding RLVR).
 - Preserved off-diagonal AUROC → signal suppression without drift.
 
-The matrix decomposes *which mechanism* explains any concealment gap we find. This is the third figure of the paper.
+The matrix decomposes *which mechanism* explains the concealment gap we find. This is the third figure of the paper.
 
 ---
 
@@ -207,22 +171,6 @@ Inputs: checkpoint, prompt set. Outputs: per-rollout CSV with parsed CoT, parsed
 ECE, reliability diagram, verbalized AUROC over the verbalized confidence column from `behavioral.py`. Uses a separate elicitation call ("Rate your confidence in the above answer from 0 to 100") rather than inline elicitation, to avoid contaminating the CoT.
 *Accept when:* reliability diagrams produced for `C_SFT` and `C_outcome`, ECE and AUROC numbers reported.
 
-**`extension/subgoal/parser.py`**
-Parses `<subgoal> ... </subgoal>` declarations. Returns list of `(target_value, available_subset, position)` tuples.
-*Accept when:* unit tests pass on 20 hand-crafted traces including malformed declarations.
-
-**`extension/subgoal/verifier.py`**
-`is_reachable(target, subset)` via exhaustive enumeration. `is_achieved(target, subset, segment)` via arithmetic parsing in the trace segment.
-*Accept when:* unit tests on positive and negative cases pass.
-
-**`extension/subgoal/reward.py`**
-Composes `R = R_outcome + λ * R_subgoal` using the existing outcome reward and the subgoal verifier.
-*Accept when:* `compute_reward(rollout)` returns expected values on hand-crafted cases including degenerate (zero subgoals) cases.
-
-**`extension/subgoal/sft_augment.py`**
-Inserts subgoal declarations into expert traces.
-*Accept when:* spot-check of 50 augmented traces shows syntactic validity and semantic naturalness; augmented dataset matches expected size.
-
 **`extension/probe/cache_hidden_states.py`**
 Extracts hidden states at specified (layer, position) pairs and caches to disk.
 *Accept when:* 5k rollouts × 3 positions × 2 layers caches in under 30 minutes; cache size manageable (<20 GB per checkpoint).
@@ -232,52 +180,51 @@ Per (checkpoint, layer, position) tuple, trains logistic regression probe with t
 *Accept when:* probe AUROC, shuffled-label AUROC, random-direction AUROC, and held-out-problem AUROC are all reported.
 
 **`extension/probe/eval_probe.py`**
-Computes concealment gap, earliness, Cohen's d.
+Computes concealment gap, earliness, Cohen's d at the trace-final position.
 *Accept when:* outputs headline numbers for the paper.
+
+**`extension/probe/eval_at_assertion_tokens.py`** *(new — supports H3)*
+Locates every occurrence of an assertion in the CoT matching the keyword set `{"Perfect", "this works", "got it", "the answer is", "verified"}`. For each occurrence, extract the hidden state at that token position and apply the (already-trained) probe from `train_probe.py`. Compare against matched neutral-position samples drawn from the same traces.
+*Accept when:* outputs (a) probe AUROC at confidence-asserting positions, (b) probe AUROC at matched neutral positions, (c) per-assertion alignment table (probe prediction vs. surface implied confidence) for `C_SFT` and `C_outcome`. Reports whether the gap concentrates at assertion positions vs. trace-final.
 
 **`extension/probe/transfer.py`**
 Cross-checkpoint matrix.
-*Accept when:* 3×3 AUROC matrix produced.
+*Accept when:* 2×2 AUROC matrix produced (`C_SFT` ↔ `C_outcome`).
 
 **`extension/metrics/dynamics.py`**
-Snapshots every ~50 RLOO steps, reruns Layer A and Layer B on each.
-*Accept when:* trajectory plots of probe AUROC, verbalized AUROC, concealment gap over training steps.
+Replays Layer A and Layer B on each saved 10-step `C_outcome` snapshot.
+*Accept when:* trajectory plots of probe AUROC at `</think>`, probe AUROC at confidence-asserting positions, verbalized AUROC, and concealment gap, all over training steps.
 
-**`extension/metrics/step_confidence.py`**
-Per-subgoal calibration on `C_process`.
-*Accept when:* reliability diagram at the subgoal level.
+**`extension/metrics/step_confidence.py`** *(scope-reduced)*
+Step-level verbalized-confidence calibration on `C_outcome`. Single-arm characterization; not a process-vs-outcome comparison.
+*Accept when:* reliability diagram at the computational-step level on `C_outcome`.
 
-**`extension/honest_reward/probe_aware_reward.py`** *(Phase 3B, optional)*
-Frozen probe consistency reward augmentation, KL sweep harness.
-*Accept when:* `C_honest_lowKL` and `C_honest_highKL` train without diverging.
+*Note: the `extension/subgoal/*` modules (`parser.py`, `verifier.py`, `reward.py`, `sft_augment.py`) and `extension/training/process_rloo.py` remain in the repo for retrospective traceability of the failed-intervention appendix, but are no longer build targets in this section.*
 
 ### 5.2 Build order with go/no-go gates
 
 ```
 Day 1                      Day 7
   |                          |
-  Behavioral harness (4.1) --> Phase 1 results in hand
+  Behavioral harness (Layer A) --> Phase 1 results in hand
   ↓
-  Subgoal parser+verifier (4.2-4.4)
+  Probe pipeline (cache, train, eval at </think>)
   ↓
-  SFT augmentation, C_process training
+  Per-position probe analysis at confidence-asserting tokens
   ↓
-  Probe pipeline (cache, train, eval)
+  Cross-checkpoint transfer (2x2)
   ↓
-  Cross-checkpoint transfer
+  Layer C dynamics over saved 10-step snapshots
   ↓
-  Layer C dynamics
-  ↓
-  [Optional] Phase 3B
+  Retrospective C_process analysis for the Appendix
 ```
 
-Gates:
+Gates (G3 — the former `C_process` training gate — has been removed; subsequent gates have been renumbered):
 
-- **G1 (after Phase 1):** Behavioral metrics show meaningful differences between C_SFT and C_outcome (e.g., confident-wrong rate visibly higher in C_outcome). If yes, proceed. If no, reconsider whether the behavioral story exists at 0.5B.
-- **G2 (after first probe):** Probe AUROC on C_SFT > 0.65 at some layer/position. If yes, proceed to full Phase 2. If no, report "scale-dependent: 0.5B does not encode the signal as 1.5B+ do" as the headline result.
-- **G3 (after C_process):** C_process trains successfully (>0.4 accuracy, emits >50% well-formed subgoals). If yes, proceed. If no, debug subgoal augmentation; if intractable, drop process arm and report only outcome vs SFT.
-- **G4 (after transfer):** 3×3 matrix is interpretable. If yes, Phase 3 done. If no, exploratory only.
-- **G5 (after all of the above):** Time and compute remain. If yes, attempt Phase 3B. If no, stop; Phases 1-3 are a complete paper.
+- **G1 (after Phase 1):** Behavioral metrics show meaningful differences between `C_SFT` and `C_outcome` (e.g., confident-wrong rate visibly higher in `C_outcome`). If yes, proceed. If no, reconsider whether the behavioral story exists at 0.5B.
+- **G2 (after first probe):** Probe AUROC on `C_SFT` > 0.65 at some layer/position. If yes, proceed to full Phase 2. If no, report "scale-dependent: 0.5B does not encode the signal as 1.5B+ do" as the headline result.
+- **G3 (after per-position probe analysis):** Either (a) probe AUROC at confidence-asserting positions is interpretably above trace-final probe AUROC — H3 supported, headline; or (b) it is statistically indistinguishable — H3 falsified, report as null result alongside the trace-final gap, which still stands. Either way, proceed.
+- **G4 (after transfer):** 2×2 matrix is interpretable. If yes, Phase 3 done. If no, exploratory only.
 
 ---
 
@@ -331,28 +278,29 @@ Conservative total for Phases 1-3 (excluding 3B): ≈ $135-195. Headroom is larg
 |---|---|---|
 | R1 | Probe AUROC too low at 0.5B to claim signal | Sweep layers and positions; if all weak, report scale-dependence as the finding. Yuan et al. show 0.918 AUROC at 1.5B; we extend below their range. |
 | R2 | Outcome RL does not widen the gap (H2 fails) | Publishable scale-dependence claim: "RL at 0.5B does not induce concealment unlike at 7B+". |
-| R3 | Subgoal SFT augmentation produces unlearnable traces | SGVR and El et al. got similar augmentation to work; hand-inspect a few, fix parser. |
-| R4 | 700 RLOO steps insufficient to see gap evolve | Checkpoint every 50 steps; the trajectory itself is informative even if final values noisy. |
-| R5 | Phase 3B obfuscation emerges (probe reward-hacked) | Predicted outcome at low KL per Taufeeque et al. Report and characterize via cross-checkpoint transfer. |
-| R6 | Step-grounded confidence elicitation fails at 0.5B | Drop from Layer A; overall confidence metric still captures the behavioral story. |
-| R7 | `C_outcome` was trained without intermediate checkpoint saves | Re-train with snapshots (~$80-150, ~10 hours) or skip Layer C. See Section 2.3. **Decide today.** |
-| R8 | Verbalized confidence elicitation contaminates the CoT | Use a separate elicitation call (post-rollout), not inline. Already baked into 5.1 calibration module. |
+| R4 | 100 RLOO steps insufficient to see gap evolve | We already have all 10 snapshots; the trajectory itself is informative even if endpoint values noisy. |
+| R7 | `C_outcome` was trained without intermediate checkpoint saves | **CLOSED.** Snapshots persisted every 10 steps. See Section 2.3. |
+| R8 | Verbalized confidence elicitation contaminates the CoT | Use a separate elicitation call (post-rollout), not inline. Already baked into the calibration module. |
+| R-NEW | Per-position probe analysis shows no concentration of the gap at confidence-asserting token positions (H3 falsifies) | Report the null result; the trace-final concealment-gap measurement (H1/H2) still stands. The null on H3 is itself a publishable finding: "the gap is spatially uniform, not localized at verbalized assertions." |
 
 ---
 
 ## 8. Workshop Ceiling, Honestly
 
-This is a strong class project with a real shot at being among the best in the cohort. Workshop submission is plausible, in the range of 45-60% conditional on clean execution and a legible result, with the upper end reflecting the explicit-future-work flags from Yuan et al. and Anand et al. that strengthen our motivation paragraph. The dominant risk is execution at 0.5B and result legibility, not novelty.
+Workshop submission is plausible, in the range of **45-60%** conditional on clean execution and a legible result. The upper end reflects the explicit-future-work flags from Yuan et al. and Anand et al. and the position-resolved probe analysis (H3) being a genuinely under-explored angle on the gap. The dominant risk is execution at 0.5B and result legibility, not novelty.
+
+**The workshop pitch, after this scope decision:** *Controlled measurement of the concealment gap on an exact-verifier task at small scale, with per-position probe analysis at verbalized confidence assertions, and a complementary negative result from an annotation-only process-reward intervention that confirms a recent theoretical prediction (Strategic Information Allocation).*
 
 What carries it from "class project" to "workshop":
-- Clean headline plot showing the gap evolving across training.
-- Cross-checkpoint transfer matrix that has an interpretable pattern.
-- A representative confident-wrong example with annotated probe activations.
+- Clean headline plot showing the trace-final gap evolving across `C_outcome` training, with the confidence-asserting-position probe AUROC as a third line.
+- 2×2 cross-checkpoint transfer matrix with an interpretable drift-vs-suppression pattern.
+- A representative confident-wrong example with annotated probe activations at the assertion token.
+- The `C_process` negative-result appendix, framed as an empirical confirmation of Strategic Information Allocation's prediction about annotation-only tokens at small scale.
 
 What does not push it to workshop:
 - Marginal accuracy improvements.
 - Replication of existing process-reward methods on a new task.
-- Generic discussion of process vs outcome reward without the internal lens.
+- Generic discussion of process vs outcome reward without the probe-as-measurement layer.
 
 Realistic submission targets if results are clean: a reasoning-focused workshop, MATH-AI, an interpretability workshop, or Tiny Papers. Not main conference tracks.
 
@@ -421,14 +369,104 @@ These are the citations our proposal and final report depend on. **Before submit
 - Gandhi et al. (2024). "Stream of Search." arXiv 2404.03683. The Countdown task and the dataset we SFT on.
 - Gandhi et al. (2025). "Cognitive Behaviors that Enable Self-Improving Reasoners." arXiv 2503.01307. Source of `Asap7772/cog_behav_all_strategies`.
 
+**Theory the negative result confirms and the measurement approach relies on (added post-scope-decision; VERIFY arXiv IDs AND author lists before any submission):**
+- Kim et al. (March 2026). "Strategic Information Allocation." arXiv 2603.15500. *Theoretical prediction that small models without native epistemic capacity cannot be RL'd into effective reasoners via annotation-only signals.* Motivates the `C_process` failed-intervention framing in the Appendix.  ⚠️ **VERIFY tag, authorship, and exact title before submission — added from secondary discussion, not personally read.**
+- (Anon. or Kim et al.) (March 2026). "Epistemic Observability." arXiv 2603.20531. *Formal impossibility result for text-only RL producing honest behavior in models without an internal verification mechanism.* Motivates the probe-based (rather than reward-based) measurement approach.  ⚠️ **VERIFY tag, authorship, and exact title before submission — added from secondary discussion, not personally read.**
+- Huang et al. (ICLR 2024). "Large Language Models Cannot Self-Correct Reasoning Yet." *Original characterization of the correct-to-wrong revision pattern in CoT reasoning; cited as the established behavioral phenomenon underlying our trace-level observations.*  ⚠️ **VERIFY arXiv tag and exact title before submission.**
+
 ---
 
 ## What To Do Today
 
 1. ~~Confirm Section 2.3.~~ Resolved: 10-step snapshots exist.
 2. ~~Confirm team split.~~ Locked to 2 people; roles in §6.1.
-3. **Person B** starts on `extension/metrics/behavioral.py` against existing `eval_sft.json` (`sft_baseline_passk.json`) and `eval_rloo.json` (`rloo_fixed_v2_passk.json`). Reasoning-answer consistency parser + confident-wrong / multiple-`<answer>` repetition counter are the first metrics. No new GPU runs needed for Phase 1.
-4. **Person A** reads Yuan et al. and Anand et al. end-to-end while drafting `extension/subgoal/parser.py` and `verifier.py` against the format in §4.3.
-5. Both: create the `extension/` directory tree per §10 layout before any code lands.
+3. ~~Build subgoal infrastructure and train `C_process`.~~ Done and retired — `C_process` trained but underperformed; arm closed per Section 1.2 reasoning and documented in the Appendix.
+4. **Both**: run the probe pipeline against `C_SFT` and `C_outcome` per §5.1. Person B drives `behavioral.py` → `cache_hidden_states.py` → `train_probe.py` → `eval_probe.py` → `eval_at_assertion_tokens.py` → `transfer.py` (2×2) → `dynamics.py`. Person A drives the retrospective `C_process` analysis for the Appendix using existing eval JSONs.
 
 Lock and build.
+
+---
+
+## Appendix: Failed Intervention — Annotation-Only Process Reward
+
+This appendix preserves the design of the `C_process` arm, what we observed empirically, and the mechanistic explanation. It is now framed as a documented negative result, not an in-flight experiment.
+
+### A.1 The process reward (original §4.2)
+
+Per rollout, the composite reward we attempted was:
+
+```
+R = R_outcome + λ * R_subgoal
+
+R_outcome ∈ {0.0, 0.1, 1.0}                        # per default project spec
+R_subgoal = (n_valid_and_achieved − α * n_invalid) # capped at [0, 1]
+            / max(n_declared, 1)
+```
+
+Defaults used in the run: `λ = 0.3`, `α = 1.0`.
+
+### A.2 Subgoal token format and exact verifier (original §4.3)
+
+The model was trained to emit `<subgoal>` declarations during reasoning:
+
+```
+<subgoal> reach 60 from [3, 4, 5] </subgoal>
+3 * 4 = 12 ... no. 4 * 5 = 20, 20 * 3 = 60. reached 60.
+<subgoal> reach 68 from [60, 8] </subgoal>
+60 + 8 = 68. done.
+```
+
+A subgoal is a `(target_value, available_subset)` pair. Two exact checks:
+
+- **Validity.** Is `target_value` reachable from `available_subset` using +, −, ×, ÷? Exhaustive enumeration over the 3-4 element subset.
+- **Achievement.** Does the model's subsequent reasoning before the next subgoal (or before `</think>`) actually compute `target_value` using only `available_subset`?
+
+Both checks require no learned model — the cleanliness property meant to differentiate this process reward from SGVR, PROF, PROGRS, all of which use learned PRMs.
+
+### A.3 SFT augmentation (original §4.4)
+
+Because the base model never emits subgoals on its own, we first SFT on an augmented dataset:
+
+1. Take each trace in `Asap7772/cog_behav_all_strategies`.
+2. Parse arithmetic expressions in the trace.
+3. Identify intermediate values that appear in the final expression.
+4. Insert `<subgoal>` declarations announcing each intermediate before it is computed.
+5. Validate that the augmented trace is syntactically clean.
+
+This produced `C_SFT_aug`. RLOO from `C_SFT_aug` with the composite reward produced `C_process`.
+
+### A.4 What was empirically observed
+
+- `C_SFT_aug` learned the subgoal *grammar* (~92% of rollouts emit `<subgoal>` tags; ~78% emit more than one) but not its *semantics*.
+- `C_process` underperformed `C_outcome` on accuracy and **did not produce a discernible composite-reward bonus** in practice: the vast majority of emitted `<subgoal>` tags were *invalid* (declared target unreachable from declared inputs) or *not achieved* (subsequent computation did not reach the declared target).
+- Qualitatively, the model treated `<subgoal>` declarations as annotation that decorated reasoning it would have produced anyway, and frequently as filler in dead-end search branches. Removing the tags would not have changed the arithmetic.
+
+### A.5 Mechanistic explanation and theoretical connection
+
+The pattern matches the prediction of **Strategic Information Allocation** (Kim et al., arXiv 2603.15500, March 2026 — VERIFY): at small scale, a reasoner without native epistemic capacity cannot be RL'd into routing useful structure through annotation-only tokens, because the tokens carry no inference-time functional load. Compare to:
+
+- **Functional tokens that *did* work in prior CS 224R projects.** El et al.'s `<clean>` triggered context management at inference; Hu & Wang's function-call tokens triggered external arithmetic. Both *changed inference behavior*. Ours did not.
+- **DeepSeek-R1 `<think>`.** Structural; the surrounding training pattern enforces "long reasoning before answer." But this requires a larger base model and much more training; not directly comparable.
+
+The retrospective framing: `C_process` is data for the claim "annotation-only process reward does not change inference at 0.5B, even when paired with an exact verifier" — which is a positive contribution at the *theoretical-confirmation* level.
+
+---
+
+## Decision Log
+
+Three rounds of recursive literature scan led to the current scope. Recording here so future-us doesn't re-litigate.
+
+**Round 1.** Probe-aware reward (Phase 3B) was scoped out early because Papadatos & Freedman ("Linear Probe Penalties Reduce LLM Sycophancy", Dec 2024) and Taufeeque et al. ("The Obfuscation Atlas", Feb 2026) already characterize the regime; the novelty surplus did not justify the engineering risk on this timeline.
+
+**Round 2.** Step-grounded confidence as a *novel mechanism* (vs. as a descriptive metric) was scoped out because MMBoundary (multimodal), SPAE (advantage-estimation), and Temporalizing Confidence (non-RL) collectively occupy the adjacent ground. We retain it as a single-arm descriptive metric on `C_outcome` only.
+
+**Round 3.** Functional / introspection tokens (`<introspect>`, `<verify>`, `<commit>`, etc.) were scoped out because the 2024-novelty has saturated by 2026 across multiple papers, including DeepSeek-R1, SCoRe, and three concurrent 2026 works on trajectory drift. Adding a new token would compete in a crowded subfield. The `C_process` annotation-only arm was attempted before this decision crystallized; rather than discard, we retain it as a *negative result* whose mechanism confirms Strategic Information Allocation (Kim et al., 2603.15500, March 2026).
+
+**Anchor decision.** The probe-as-measurement layer is rich enough on its own:
+- Trace-final concealment gap on `C_SFT` and `C_outcome` (H1, H2).
+- Position-resolved gap at confidence-asserting tokens (H3 — under-explored, low-cost to test).
+- 2×2 cross-checkpoint transfer matrix decomposing drift vs. suppression.
+- Layer C temporal trajectory over already-saved snapshots.
+- `C_process` negative result as a complementary contribution.
+
+**Abandoned arms (for the record):** probe-aware reward; introspection token; functional tokens; step-grounded confidence as a novel mechanism; expansion of `C_process` to additional λ/α sweeps; block-design subgoals; sub-function reasoning tokens; any new training run on top of the existing checkpoints. None of these are part of the headline. Future-us should not reopen them without a concrete novelty argument against the post-2026 literature.
