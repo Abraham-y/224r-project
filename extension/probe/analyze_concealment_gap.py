@@ -63,6 +63,42 @@ def verbalized_auroc(rows: list[dict]) -> tuple[float, int, int]:
     xs = np.array(xs); ys = np.array(ys)
     if len(np.unique(ys)) < 2:
         return float("nan"), len(xs), int(ys.sum())
+    if len(np.unique(xs)) < 2:
+        # Degenerate: all confidences identical (broken elicitation).
+        return float("nan"), len(xs), int(ys.sum())
+    return float(roc_auc_score(ys, xs)), len(xs), int(ys.sum())
+
+
+# Binary-keyword fallback (used when the elicitation prompt fails).
+CONFIDENT_PATTERNS = (
+    "perfect", "this works", "got it", "the answer is", "verified",
+    "this is correct", "confirmed", "found it",
+)
+
+
+def keyword_verbalized_auroc(eval_json_path: str) -> tuple[float, int, int]:
+    """Fallback verbalized confidence: 1 if the CoT contains any confidence
+    keyword, 0 otherwise. AUROC of this binary signal vs (score == 1.0).
+    Uses ALL responses from the eval JSON (not just one per prompt).
+    """
+    import re
+    rows = [
+        json.loads(l) for l in open(eval_json_path).read().strip().splitlines() if l.strip()
+    ]
+    xs, ys = [], []
+    for r in rows:
+        for resp, score in zip(r["response"], r["scores"]):
+            # Restrict keyword search to the <think> body of the response
+            # (not the verification echoes that appear post-answer).
+            m = re.search(r"<think>(.*?)</think>", resp, re.DOTALL)
+            think_body = m.group(1) if m else resp
+            low = think_body.lower()
+            has_kw = int(any(p in low for p in CONFIDENT_PATTERNS))
+            xs.append(has_kw)
+            ys.append(1 if float(score) == 1.0 else 0)
+    xs = np.array(xs); ys = np.array(ys)
+    if len(np.unique(ys)) < 2 or len(np.unique(xs)) < 2:
+        return float("nan"), len(xs), int(ys.sum())
     return float(roc_auc_score(ys, xs)), len(xs), int(ys.sum())
 
 
@@ -147,36 +183,54 @@ def main() -> None:
     parser.add_argument("--cache_dir", default="extension/cache/probe_cache")
     parser.add_argument("--sft_confidence", default="extension/cache/confidence/C_SFT_confidence.jsonl")
     parser.add_argument("--outcome_confidence", default="extension/cache/confidence/C_outcome_confidence.jsonl")
+    parser.add_argument("--sft_eval", default="eval_sft.json")
+    parser.add_argument("--outcome_eval", default="eval.json")
     parser.add_argument("--layer", type=int, default=16)
     args = parser.parse_args()
 
     paths = {"C_SFT": args.sft_confidence, "C_outcome": args.outcome_confidence}
+    eval_paths = {"C_SFT": args.sft_eval, "C_outcome": args.outcome_eval}
 
     summary = {}
     for ckpt, path in paths.items():
         rows = load_confidence_jsonl(path)
-        if not rows:
-            print(f"[{ckpt}] no confidence file at {path}, skipping")
-            continue
-        verb_auc, n_verb, n_correct = verbalized_auroc(rows)
+        verb_auc, n_verb, n_correct = (float("nan"), 0, 0)
+        if rows:
+            verb_auc, n_verb, n_correct = verbalized_auroc(rows)
+        if np.isnan(verb_auc):
+            print(f"[{ckpt}] elicited confidences are degenerate (all identical or missing).")
+            print(f"[{ckpt}] falling back to binary keyword-presence AUROC.")
+            verb_auc, n_verb, n_correct = keyword_verbalized_auroc(eval_paths[ckpt])
+            verbal_kind = "keyword-presence (CoT contains any confidence keyword)"
+        else:
+            verbal_kind = "verbalized [0,100] elicitation"
+
         probe_auc = probe_pre_answer_auroc(args.cache_dir, ckpt, args.layer)
         gap = probe_auc - verb_auc
         summary[ckpt] = {
             "verbalized": verb_auc, "probe": probe_auc, "gap": gap,
-            "n_verb": n_verb, "n_correct": n_correct, "n_rollouts_with_confidence": len(rows),
+            "n_verb": n_verb, "n_correct": n_correct,
+            "verbal_kind": verbal_kind,
         }
 
+    print()
     print("=" * 86)
-    print(f"Concealment gap = probe AUROC at </think> (L{args.layer}) - verbalized confidence AUROC")
+    print(f"Concealment gap = probe AUROC at </think> (L{args.layer}) - verbalized AUROC")
     print("=" * 86)
-    header = f"{'checkpoint':<14}{'n_rollouts':>12}{'verbal_AUROC':>14}{'probe_AUROC':>14}{'gap':>10}"
+    header = (
+        f"{'checkpoint':<14}{'n_rollouts':>12}{'n_correct':>11}"
+        f"{'verbal_AUROC':>14}{'probe_AUROC':>14}{'gap':>10}"
+    )
     print(header)
     print("-" * len(header))
     for ckpt, s in summary.items():
         print(
-            f"{ckpt:<14}{s['n_verb']:>12}"
+            f"{ckpt:<14}{s['n_verb']:>12}{s['n_correct']:>11}"
             f"{s['verbalized']:>14.3f}{s['probe']:>14.3f}{s['gap']:>+10.3f}"
         )
+    print()
+    for ckpt, s in summary.items():
+        print(f"  {ckpt}: verbalized signal = {s['verbal_kind']}")
 
     # Joint analysis per checkpoint.
     print()
