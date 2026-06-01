@@ -1,0 +1,44 @@
+[analyze] found 18 .npz files in extension/cache/probe_cache_1.5b_clean406
+
+============================================================================================
+Per-(checkpoint, layer, position) probe AUROC
+============================================================================================
+checkpoint     layer          kind     n   pos%     probe  shuffled      rand
+-----------------------------------------------------------------------------
+C_SFT             12     assertion  2987    47%     0.782     0.522     0.575
+C_SFT             12       neutral  2743    50%     0.584     0.484     0.522
+C_SFT             12    pre_answer  4194    35%     0.833     0.491     0.657
+C_SFT             16     assertion  2987    47%     0.825     0.516     0.558
+C_SFT             16       neutral  2743    50%     0.574     0.489     0.510
+C_SFT             16    pre_answer  4194    35%     0.857     0.506     0.517
+C_SFT             20     assertion  2987    47%     0.844     0.502     0.549
+C_SFT             20       neutral  2743    50%     0.584     0.468     0.507
+C_SFT             20    pre_answer  4194    35%     0.887     0.510     0.627
+C_outcome         12     assertion  3169    89%     0.800     0.495     0.550
+C_outcome         12       neutral  2378    88%     0.549     0.503     0.519
+C_outcome         12    pre_answer  4784    52%     0.964     0.507     0.894
+C_outcome         16     assertion  3169    89%     0.816     0.478     0.504
+C_outcome         16       neutral  2378    88%     0.568     0.515     0.514
+C_outcome         16    pre_answer  4784    52%     0.973     0.521     0.760
+C_outcome         20     assertion  3169    89%     0.936     0.483     0.574
+C_outcome         20       neutral  2378    88%     0.604     0.542     0.514
+C_outcome         20    pre_answer  4784    52%     0.976     0.508     0.838
+
+============================================================================================
+Headline comparisons
+============================================================================================
+
+[H1/H2] pre_answer (</think> position) probe AUROC, best layer per checkpoint:
+  C_SFT     L20: 0.887
+  C_outcome L20: 0.976
+  delta = +0.089  (↑ RL strengthens internal correctness signal)
+
+[H3] On C_outcome, probe AUROC at confidence-asserting vs neutral token positions:
+  assertion L20: 0.936
+  neutral   L20: 0.604
+  delta = +0.332   ↑ H3 supported (gap concentrates at confidence-asserting tokens)
+
+[H3 reference] Same comparison on C_SFT (does the localization preexist RL?):
+  assertion L20: 0.844
+  neutral   L20: 0.584
+  delta = +0.260
