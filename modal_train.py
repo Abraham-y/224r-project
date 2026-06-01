@@ -285,6 +285,21 @@ def run_cache_answers(args: list[str]) -> str:
     return _run_training("extension/probe/cache_answer_positions.py", args)
 
 
+@app.function(
+    image=base_image,
+    gpu=GPU_CONFIG,
+    cpu=CPU_COUNT,
+    timeout=TIMEOUT_SECONDS,
+    startup_timeout=STARTUP_TIMEOUT_SECONDS,
+    volumes={str(REMOTE_VOLUME_ROOT): TRAINING_VOLUME},
+    secrets=_build_secret_list(),
+)
+def run_causal_steering(args: list[str]) -> str:
+    # Causal-steering experiment: HF generation with residual-stream
+    # injection at the </think> token, layer L16.
+    return _run_training("extension/probe/causal_steering.py", args)
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Launch one of the existing training entrypoints on Modal.",
@@ -294,7 +309,7 @@ def _build_parser() -> argparse.ArgumentParser:
         choices=(
             "sft", "ipo", "rloo", "process_rloo", "eval",
             "probe_cache", "elicit_confidence", "token_logprob_confidence",
-            "sample_local", "cache_answers",
+            "sample_local", "cache_answers", "causal_steering",
         ),
     )
     parser.add_argument(
@@ -335,6 +350,8 @@ def main(*raw_args: str) -> None:
         call = run_sample_local.spawn(trainer_args)
     elif args.trainer == "cache_answers":
         call = run_cache_answers.spawn(trainer_args)
+    elif args.trainer == "causal_steering":
+        call = run_causal_steering.spawn(trainer_args)
     else:
         call = run_rloo.spawn(trainer_args)
 
