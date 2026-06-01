@@ -1,0 +1,24 @@
+Position-resolved AUROC + neutral-token frequency analysis
+
+=== AUROC by (kind, distance-to-</think>) bin ===
+  pre_answer   0 (= </think>)          n=6306    AUROC=0.896
+  assertion    1-50 (just before)      n=3911    AUROC=0.668
+  assertion    50-150                  n=66      AUROC=0.922
+  assertion    150-400                 n=50      AUROC=0.844
+  neutral      1-50 (just before)      n=851     AUROC=0.578
+  neutral      50-150                  n=1649    AUROC=0.517
+  neutral      150-400                 n=1400    AUROC=0.529
+  neutral      400-800                 n=135     AUROC=0.416
+
+=== Per-neutral-token AUROC ===
+  1                n=227    AUROC=0.400  mean_dist=117
+  2                n=188    AUROC=0.394  mean_dist=130
+  =                n=160    AUROC=0.533  mean_dist=116
+  4                n=149    AUROC=0.546  mean_dist=137
+  6                n=137    AUROC=0.621  mean_dist=131
+  3                n=137    AUROC=0.532  mean_dist=128
+  7                n=135    AUROC=0.398  mean_dist=139
+  5                n=135    AUROC=0.438  mean_dist=134
+  8                n=130    AUROC=0.496  mean_dist=139
+  9                n=123    AUROC=0.453  mean_dist=126
+  -                n=121    AUROC=0.656  mean_dist=111
