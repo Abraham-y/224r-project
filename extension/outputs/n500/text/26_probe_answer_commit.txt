@@ -1,0 +1,9 @@
+Probe-as-answer-selector simulation on 0.5B C_outcome clean-406 multi-answer rollouts
+  n_rollouts: 5458
+  verifier-scored baseline acc: 0.5740
+  first-block-correctness (oracle pick-first): 0.6363
+  last-block-correctness (cache): 0.5740
+
+  best probe-commit threshold: 0.35
+  best probe-commit acc: 0.6609
+  GAIN over verifier-scored baseline: +0.0868

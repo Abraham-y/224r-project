@@ -1,0 +1,74 @@
+{
+  "label": "0.5B",
+  "layer": 16,
+  "cache_dir": "extension/cache/probe_cache_n500_clean406",
+  "auroc_results": {
+    "C_SFT": {
+      "pre_answer": {
+        "auc_orig": 0.8039555916110811,
+        "auc_new": 0.9043934825903656,
+        "n_relabeled": 714,
+        "n_total": 5823,
+        "pos_frac_orig": 0.26584234930448225,
+        "pos_frac_new": 0.3238880302249699
+      },
+      "assertion": {
+        "auc_orig": 0.7850551165461107,
+        "auc_new": 0.886679792014631,
+        "n_relabeled": 493,
+        "n_total": 3154,
+        "pos_frac_orig": 0.37507926442612555,
+        "pos_frac_new": 0.4749524413443247
+      }
+    },
+    "C_outcome": {
+      "pre_answer": {
+        "auc_orig": 0.8957267813807616,
+        "auc_new": 0.9795834500368111,
+        "n_relabeled": 640,
+        "n_total": 6306,
+        "pos_frac_orig": 0.5130034887408818,
+        "pos_frac_new": 0.5669203932762449
+      },
+      "assertion": {
+        "auc_orig": 0.702964272187855,
+        "auc_new": 0.8523047752203746,
+        "n_relabeled": 517,
+        "n_total": 4043,
+        "pos_frac_orig": 0.7798664358149888,
+        "pos_frac_new": 0.8869651249072471
+      }
+    }
+  },
+  "matched_pair": {
+    "C_SFT": {
+      "n": 226,
+      "median_delta": 0.3933428394163069,
+      "mean_delta": 0.39094423386231697,
+      "above_diag": 202,
+      "below_diag": 24,
+      "wilcoxon_p_greater": 9.277166245133769e-35
+    },
+    "C_outcome": {
+      "n": 60,
+      "median_delta": 0.3773817562954612,
+      "mean_delta": 0.4203427187087808,
+      "above_diag": 45,
+      "below_diag": 15,
+      "wilcoxon_p_greater": 3.851079814183176e-08
+    }
+  },
+  "matched_pair_mw_p": 0.6838545354778215,
+  "per_problem": {
+    "spearman_r": 0.1237573633693774,
+    "spearman_p": 0.1590386325425677,
+    "n_valid": 131,
+    "quadrants": {
+      "decoupling": 21,
+      "damage": 2,
+      "both_up": 73,
+      "noise": 8,
+      "on_axis": 27
+    }
+  }
+}

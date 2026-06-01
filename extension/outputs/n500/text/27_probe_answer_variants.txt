@@ -1,0 +1,38 @@
+Probe-answer-commit variants on 0.5B C_outcome multi-answer rollouts (n=5458)
+
+=== Baselines ===
+  BASE0  verifier-scored (last block)                    : 0.5740
+  BASE1  oracle pick-first                               : 0.6363
+  BASE2  random block                                    : 0.6018
+  UPPER  any block correct (probe-free upper bound)      : 0.6708
+  UPPER2 oracle commit-at-first-correct                  : 0.6708
+
+=== Probe strategies ===
+  PROBE-MAX                                              : 0.6585  (gain vs BASE0: +0.0845)
+  PROBE-TOP-2 mean                                       : 0.6420
+  PROBE-TOP-3 mean                                       : 0.6286
+  PROBE-COMMIT @ T=0.35, fb=LAST          : 0.6609
+  PROBE-COMMIT @ T=0.89, fb=ARGMAX       : 0.6623
+
+=== Threshold sweep ===
+       T        fb=last        fb=argmax    fallback%
+    0.05         0.6594           0.6596        24.5%
+    0.10         0.6603           0.6605        25.8%
+    0.15         0.6603           0.6609        26.4%
+    0.20         0.6605           0.6610        26.6%
+    0.25         0.6607           0.6612        26.9%
+    0.30         0.6607           0.6612        27.1%
+    0.35         0.6609           0.6616        27.3%
+    0.40         0.6605           0.6616        27.5%
+    0.45         0.6601           0.6614        27.6%
+    0.50         0.6601           0.6616        27.8%
+    0.54         0.6601           0.6618        27.9%
+    0.59         0.6598           0.6616        28.2%
+    0.64         0.6596           0.6618        28.5%
+    0.69         0.6598           0.6620        28.8%
+    0.74         0.6590           0.6616        29.2%
+    0.79         0.6585           0.6620        29.9%
+    0.84         0.6572           0.6618        30.8%
+    0.89         0.6550           0.6623        32.3%
+    0.94         0.6477           0.6618        35.6%
+    0.99         0.6085           0.6605        58.5%

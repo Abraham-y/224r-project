@@ -294,6 +294,21 @@ def run_cache_answers(args: list[str]) -> str:
     volumes={str(REMOTE_VOLUME_ROOT): TRAINING_VOLUME},
     secrets=_build_secret_list(),
 )
+def run_cache_all_thinkclose(args: list[str]) -> str:
+    # Cache hidden states at EVERY </think> token in each rollout
+    # (not just the first, like cache_hidden_states.py).
+    return _run_training("extension/probe/cache_all_think_close.py", args)
+
+
+@app.function(
+    image=base_image,
+    gpu=GPU_CONFIG,
+    cpu=CPU_COUNT,
+    timeout=TIMEOUT_SECONDS,
+    startup_timeout=STARTUP_TIMEOUT_SECONDS,
+    volumes={str(REMOTE_VOLUME_ROOT): TRAINING_VOLUME},
+    secrets=_build_secret_list(),
+)
 def run_causal_steering(args: list[str]) -> str:
     # Causal-steering experiment: HF generation with residual-stream
     # injection at the </think> token, layer L16.
@@ -342,6 +357,7 @@ def _build_parser() -> argparse.ArgumentParser:
             "probe_cache", "elicit_confidence", "token_logprob_confidence",
             "sample_local", "cache_answers", "causal_steering",
             "probe_behavioral", "train_answer_probe",
+            "cache_all_thinkclose",
         ),
     )
     parser.add_argument(
@@ -388,6 +404,8 @@ def main(*raw_args: str) -> None:
         call = run_probe_behavioral.spawn(trainer_args)
     elif args.trainer == "train_answer_probe":
         call = run_train_answer_probe.spawn(trainer_args)
+    elif args.trainer == "cache_all_thinkclose":
+        call = run_cache_all_thinkclose.spawn(trainer_args)
     else:
         call = run_rloo.spawn(trainer_args)
 

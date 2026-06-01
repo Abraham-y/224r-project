@@ -30,7 +30,13 @@ from sklearn.preprocessing import StandardScaler
 
 warnings.filterwarnings("ignore")
 
-CACHE = "extension/cache/probe_cache_n500_clean406"
+import argparse as _argparse
+_p = _argparse.ArgumentParser(add_help=False)
+_p.add_argument("--cache_dir", default="extension/cache/probe_cache_n500_clean406")
+_p.add_argument("--out", default="extension/outputs/n500/text/21_probe_cosines.txt")
+_args, _ = _p.parse_known_args()
+CACHE = _args.cache_dir
+OUT = _args.out
 KINDS = ("pre_answer", "assertion", "neutral")
 CKPTS = ("C_SFT", "C_outcome")
 
@@ -141,7 +147,8 @@ def main():
     txt = "\n".join(lines)
     print(txt)
     os.makedirs("extension/outputs/n500/text", exist_ok=True)
-    with open("extension/outputs/n500/text/21_probe_cosines.txt", "w") as f:
+    os.makedirs(os.path.dirname(OUT) or ".", exist_ok=True)
+    with open(OUT, "w") as f:
         f.write(txt + "\n")
 
 
