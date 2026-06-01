@@ -1,0 +1,35 @@
+Probe-guided budgeted restart on 0.5B C_outcome clean-406
+  Truth: first-<answer>-block correctness per rollout
+  Held-out balanced AUROC of </think> probe with corrected labels: 0.982
+
+BASELINES:
+  pass@1: 0.5493
+  majority-vote-of-K: 0.5862
+  best-of-2: acc=0.6182, n_used=2.00
+  best-of-4: acc=0.6355, n_used=4.00
+  best-of-8: acc=0.6502, n_used=8.00
+  best-of-16: acc=0.6700, n_used=15.53
+
+RESTART SWEEP:
+  B= 2, T=0.30: acc=0.6182, n_used=1.44
+  B= 2, T=0.50: acc=0.6182, n_used=1.44
+  B= 2, T=0.70: acc=0.6182, n_used=1.46
+  B= 2, T=0.85: acc=0.6182, n_used=1.50
+  B= 2, T=0.95: acc=0.6207, n_used=1.57
+  B= 4, T=0.30: acc=0.6404, n_used=2.07
+  B= 4, T=0.50: acc=0.6404, n_used=2.09
+  B= 4, T=0.70: acc=0.6404, n_used=2.13
+  B= 4, T=0.85: acc=0.6404, n_used=2.25
+  B= 4, T=0.95: acc=0.6429, n_used=2.44
+  B= 8, T=0.30: acc=0.6527, n_used=3.14
+  B= 8, T=0.50: acc=0.6502, n_used=3.22
+  B= 8, T=0.70: acc=0.6502, n_used=3.30
+  B= 8, T=0.85: acc=0.6527, n_used=3.54
+  B= 8, T=0.95: acc=0.6576, n_used=3.96
+  B=16, T=0.30: acc=0.6675, n_used=4.66
+  B=16, T=0.50: acc=0.6675, n_used=4.91
+  B=16, T=0.70: acc=0.6675, n_used=5.07
+  B=16, T=0.85: acc=0.6724, n_used=5.46
+  B=16, T=0.95: acc=0.6749, n_used=6.27
+
+BEST: B=16, T=0.95: acc=0.6749, n_used=6.27
