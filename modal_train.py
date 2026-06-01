@@ -300,6 +300,37 @@ def run_causal_steering(args: list[str]) -> str:
     return _run_training("extension/probe/causal_steering.py", args)
 
 
+@app.function(
+    image=base_image,
+    gpu=GPU_CONFIG,
+    cpu=CPU_COUNT,
+    timeout=TIMEOUT_SECONDS,
+    startup_timeout=STARTUP_TIMEOUT_SECONDS,
+    volumes={str(REMOTE_VOLUME_ROOT): TRAINING_VOLUME},
+    secrets=_build_secret_list(),
+)
+def run_probe_behavioral(args: list[str]) -> str:
+    # Per-problem probe-AUROC vs behavioral-accuracy-delta correlation:
+    # reads existing C_SFT/C_outcome rollouts, forward-passes for the
+    # assertion-token hidden states, scores the probe, writes scatter + JSON.
+    return _run_training("extension/probe/probe_behavioral_correlation.py", args)
+
+
+@app.function(
+    image=base_image,
+    gpu=GPU_CONFIG,
+    cpu=CPU_COUNT,
+    timeout=TIMEOUT_SECONDS,
+    startup_timeout=STARTUP_TIMEOUT_SECONDS,
+    volumes={str(REMOTE_VOLUME_ROOT): TRAINING_VOLUME},
+    secrets=_build_secret_list(),
+)
+def run_train_answer_probe(args: list[str]) -> str:
+    # Train + pickle the post-<answer> L16 correctness probe (Pipeline) from
+    # existing C_SFT rollouts, on the leakage-free contaminated-94 split.
+    return _run_training("extension/probe/train_answer_probe.py", args)
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Launch one of the existing training entrypoints on Modal.",
@@ -310,6 +341,7 @@ def _build_parser() -> argparse.ArgumentParser:
             "sft", "ipo", "rloo", "process_rloo", "eval",
             "probe_cache", "elicit_confidence", "token_logprob_confidence",
             "sample_local", "cache_answers", "causal_steering",
+            "probe_behavioral", "train_answer_probe",
         ),
     )
     parser.add_argument(
@@ -352,6 +384,10 @@ def main(*raw_args: str) -> None:
         call = run_cache_answers.spawn(trainer_args)
     elif args.trainer == "causal_steering":
         call = run_causal_steering.spawn(trainer_args)
+    elif args.trainer == "probe_behavioral":
+        call = run_probe_behavioral.spawn(trainer_args)
+    elif args.trainer == "train_answer_probe":
+        call = run_train_answer_probe.spawn(trainer_args)
     else:
         call = run_rloo.spawn(trainer_args)
 
