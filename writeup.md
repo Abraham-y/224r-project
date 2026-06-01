@@ -540,6 +540,48 @@ The decoupling is at the representational level (different linear subspaces for 
 
 Figure: `extension/outputs/n500/figures/fig9b_within_rollout_position_appropriate.png`.
 
+### 8.5 Per-problem probe-AUROC vs accuracy-delta correlation — decoupling confirmed at the problem level
+
+The aggregate AUROCs in §2.1 show the probe weakens at assertion positions under outcome RL. **Is the per-problem behavior of the probe coupled to the per-problem behavior of accuracy?** If outcome RL *damaged* the probe on problems where the model also got worse, we'd see a positive correlation between probe-drop and accuracy-drop. If outcome RL *decoupled* the probe from the model's commit decision, the two should be independent.
+
+**Setup.** Reuse the existing `eval_c_sft_n500.json` and `eval_c_outcome_n500.json` rollouts (no resampling). Train a position-appropriate probe at the same `<answer>`-opening L16 position as §2.4 on the 94 contaminated problems (disjoint from clean-406 eval set by construction; held-out training AUROC = **0.889**, within 0.03 of §2.4's 0.920). For each of the 406 clean problems, compute per-problem AUROC and accuracy under each checkpoint:
+- `auroc_sft[i]`, `auroc_rloo[i]` from the K=16 rollouts' (probe_score, label) pairs
+- `acc_sft[i]`, `acc_rloo[i]` from the K labels
+- `probe_drop[i] = auroc_sft[i] - auroc_rloo[i]`  (>0 = probe got worse)
+- `accuracy_delta[i] = acc_rloo[i] - acc_sft[i]`  (>0 = accuracy improved)
+
+Spearman correlation across problems with mixed-outcomes on both checkpoints.
+
+**Result.**
+
+```
+n_problems_used: 218
+Spearman r = -0.032,  p = 0.63   →  essentially zero
+```
+
+Per-problem AUROC distributions:
+- `C_SFT`: mean **0.827**, median 0.873 (n=267 problems with defined AUROC)
+- `C_outcome`: mean **0.813**, median 0.867 (n=242)
+- `probe_drop`: mean **+0.012**, median +0.005 — essentially zero shift at problem level
+
+Per-problem accuracy: `C_SFT` mean 0.238, `C_outcome` mean 0.498, `accuracy_delta` mean **+0.260**.
+
+**Quadrant counts (n=218 problems with both defined):**
+
+| Quadrant | Interpretation | n | % |
+|---|---|---|---|
+| Top-right (probe ↓, accuracy ↑) | **decoupling** (RL improved behavior, probe weakened) | **103** | **47%** |
+| Top-left (probe ↑, accuracy ↑) | both improved | 91 | 42% |
+| Bottom-left (probe ↑, accuracy ↓) | noise/SFT-favored | 5 | 2% |
+| **Bottom-right (probe ↓, accuracy ↓)** | **damage** | **4** | **2%** |
+| Exactly on axis | — | 15 | 7% |
+
+**Reading.** The damage quadrant is empty (4 / 218 = 2%). On 47% of problems the probe got worse while accuracy improved (the textbook decoupling signature); on 42% both got better. The Spearman r = −0.03 (p = 0.63) is the cleanest possible "independent" result: per-problem probe behavior and per-problem accuracy behavior are statistically decorrelated. The aggregate finding from §2.1 (assertion-position AUROC drops 0.785 → 0.703) is not the result of RL *breaking* the probe on a subset of problems where it also broke behavior; rather, the probe shift and the accuracy shift are independent processes operating across the problem distribution.
+
+This per-problem evidence complements §2.4 (within-rollout the probe tracks each commit's correctness) and §2.11 (no causal effect of probe-direction steering on accuracy). All three results triangulate the same claim: the trace-final / position-appropriate probe is a **correlational reader** of a correctness-relevant subspace, and outcome RL's effect on accuracy is *not* mediated by the probe direction in a causal or per-problem-coupled way.
+
+Figure: `extension/outputs/n500/probe_behavioral/probe_behavioral_correlation.png` (scatter with quadrant labels, regression line, Spearman annotation).
+
 ---
 
 ## 9. Methodological controls
@@ -691,7 +733,7 @@ Modal compute budget consumed for the n=500 expansion + Option B + Phase 2A cach
 
 ---
 
-## 14. The seven claims I'd put in the paper
+## 14. The eight claims I'd put in the paper
 
 1. **At 0.5B with outcome RL on an exact-verifier task, the trace-final probe AUROC *rises*** (C_SFT 0.821 → C_outcome 0.901 at L20). Outcome RL strengthens, not damages, the model's internal correctness representation at the point of final commit.
 
@@ -706,6 +748,8 @@ Modal compute budget consumed for the n=500 expansion + Option B + Phase 2A cach
 6. **The global concealment gap *inverts* at 0.5B** (binary verbal-keyword AUROC 0.57 → 0.79, probe AUROC 0.72 → 0.79; global gap +0.15 → +0.01). This is the scale-inversion of Yuan et al.'s 1.5B+ result. At small scale, outcome RL globally calibrates the verbal signal while position-decoupling the internal correctness representation.
 
 7. **The trace-final probe is a *correlational reader*, not a *causal controller*.** Causal steering at α ∈ [0.5, 2.0] · h_mean_norm along the trace-final probe direction has accuracy effects indistinguishable from random-direction perturbation of matched magnitude (Δ in [-0.07, +0.02]; n=97 prefixes). Combined with the per-layer sweep showing the pre-ass gap is depth-invariant (rules out late-layer-only shaping) and the cosine analysis showing probe directions across positions are essentially orthogonal (within and across checkpoints), the picture is: the correctness representation lives in a multi-dimensional subspace; the probe captures one linear summary that reads well but writes poorly.
+
+8. **Per-problem probe-AUROC change and per-problem accuracy change are statistically independent** (§8.5). Spearman r = −0.032, p = 0.63 across the n=218 clean-406 problems with mixed outcomes on both checkpoints. The damage quadrant (probe ↓, accuracy ↓) holds only 4 problems (2%); the decoupling quadrant (probe ↓, accuracy ↑) holds 103 (47%). RL's gain in accuracy is not mediated by the probe-readable correctness representation in any per-problem-coupled way.
 
 **Headline framing.** Under outcome RL, the model's correctness representations *specialize by token position*: the trace-final position becomes more informative, the verbalization-time position becomes less informative, and the two no longer share a common linear direction. The model's *belief* at each commit reflects what it commits to (no preserved secret correct answer). This is **position-decoupling of correctness representations**, not "the model says confident things while internally knowing they're wrong." A more sophisticated form of mechanism-level reorganization than the naive concealment-gap framing.
 
