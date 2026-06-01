@@ -582,6 +582,40 @@ This per-problem evidence complements §2.4 (within-rollout the probe tracks eac
 
 Figure: `extension/outputs/n500/probe_behavioral/probe_behavioral_correlation.png` (scatter with quadrant labels, regression line, Spearman annotation).
 
+#### 8.5.1 Parallel test at the trace-final (`</think>`) position — sharper
+
+The §8.5 experiment ran at the `<answer>`-opening position (where the aggregate probe AUROC *drops* under RL: 0.785 → 0.703). We repeated the same per-problem correlation analysis at the **trace-final position** (`</think>`), where the aggregate AUROC *rises* under RL (0.804 → 0.896). The aggregate metric goes the opposite direction; the per-problem analysis settles the question.
+
+**Methodology.** Reuse the existing `extension/cache/probe_cache_n500_clean406/C_{SFT,outcome}_l16_pre_answer.npz` cache (no Modal forward passes). Train held-out probes within each checkpoint via GroupKFold(5) by prompt; per-problem AUROC over K=16 rollouts; same Spearman correlation against `accuracy_delta`. Script: `extension/probe/probe_behavioral_pre_answer.py`.
+
+**Result.**
+
+```
+n_problems_used: 218
+Spearman r = +0.335,  p = 4.0e-7   (HIGHLY SIGNIFICANT, POSITIVE)
+```
+
+| Quadrant | n | % |
+|---|---|---|
+| Decoupling (probe ↓, accuracy ↑) | **140** | **64%** |
+| Both improved (probe ↑, accuracy ↑) | 57 | 26% |
+| **Damage (probe ↓, accuracy ↓)** | **0** | **0%** |
+| Noise (probe ↑, accuracy ↓) | 9 | 4% |
+| On axis | 12 | 6% |
+
+**Per-problem AUROC distributions:**
+- `C_SFT`: mean **0.722**, median 0.741 (n=267 problems with mixed outcomes)
+- `C_outcome`: mean **0.612**, median 0.638 (n=242)
+- `probe_drop` mean: **+0.130** — per-problem AUROC *drops* by ~0.13 under RL
+
+**Reading — aggregate vs per-problem reconciles a paradox.** §2.1's aggregate trace-final AUROC *rises* under RL (0.804 → 0.896) because aggregate AUROC pools across all rollouts of all problems and benefits from cross-problem difficulty signal: under outcome RL the model becomes more confident *on easy problems* and less confident *on hard problems*, which inflates aggregate AUROC even if the within-problem discriminative power weakens. The per-problem AUROC removes that confound. **Within-problem, the trace-final probe's discriminative power actually falls** (0.722 → 0.612), agreeing with the matched-pair finding (§2.5: median Δ at assertion-position drops +0.186 → +0.004 — same direction, different position).
+
+The +0.335 Spearman is **positive** and **highly significant**: RL degrades the within-problem probe most on the problems where accuracy improved most. The damage quadrant is *empty* (0 / 218). This is a *cleaner* decoupling result than §8.5's null at `<answer>` opening — at the trace-final position the data positively triangulate "RL gain decouples from probe-readable correctness representation."
+
+**Combined story for §8.5 + §8.5.1.** Two independent positions (`<answer>` opening and `</think>`); two checkpoints' worth of held-out probe scores. At both positions the damage quadrant is essentially empty (4 and 0 problems). At `<answer>` opening the Spearman is null (r=−0.03); at trace-final it is +0.33 (p=4e−7). The aggregate trace-final AUROC's *rise* in §2.1 is a cross-problem-difficulty artifact; the within-problem reality is a *drop* (0.72 → 0.61), and that drop is **positively coupled to where RL improved performance**. Both ways of looking at it point at decoupling, not damage.
+
+Figure: `extension/outputs/n500/probe_behavioral/probe_behavioral_correlation_pre_answer.png`.
+
 ---
 
 ## 9. Methodological controls
@@ -749,7 +783,7 @@ Modal compute budget consumed for the n=500 expansion + Option B + Phase 2A cach
 
 7. **The trace-final probe is a *correlational reader*, not a *causal controller*.** Causal steering at α ∈ [0.5, 2.0] · h_mean_norm along the trace-final probe direction has accuracy effects indistinguishable from random-direction perturbation of matched magnitude (Δ in [-0.07, +0.02]; n=97 prefixes). Combined with the per-layer sweep showing the pre-ass gap is depth-invariant (rules out late-layer-only shaping) and the cosine analysis showing probe directions across positions are essentially orthogonal (within and across checkpoints), the picture is: the correctness representation lives in a multi-dimensional subspace; the probe captures one linear summary that reads well but writes poorly.
 
-8. **Per-problem probe-AUROC change and per-problem accuracy change are statistically independent** (§8.5). Spearman r = −0.032, p = 0.63 across the n=218 clean-406 problems with mixed outcomes on both checkpoints. The damage quadrant (probe ↓, accuracy ↓) holds only 4 problems (2%); the decoupling quadrant (probe ↓, accuracy ↑) holds 103 (47%). RL's gain in accuracy is not mediated by the probe-readable correctness representation in any per-problem-coupled way.
+8. **Per-problem probe-AUROC change is *not* coupled to per-problem accuracy change in any damage-shaped way** (§8.5, §8.5.1). At `<answer>` opening: Spearman r = −0.03 (p = 0.63), damage quadrant 4/218. At trace-final (`</think>`): Spearman r = +0.33 (p = 4e−7), damage quadrant **0/218**. Per-problem AUROC actually *drops* under RL at trace-final (mean 0.72 → 0.61), reconciling with §2.5's matched-pair drop — and that within-problem drop is positively coupled to *where RL improved accuracy most*. RL's gain in accuracy is not mediated by the probe-readable correctness representation; if anything, RL's gain comes *with* a probe degradation on the same problems.
 
 **Headline framing.** Under outcome RL, the model's correctness representations *specialize by token position*: the trace-final position becomes more informative, the verbalization-time position becomes less informative, and the two no longer share a common linear direction. The model's *belief* at each commit reflects what it commits to (no preserved secret correct answer). This is **position-decoupling of correctness representations**, not "the model says confident things while internally knowing they're wrong." A more sophisticated form of mechanism-level reorganization than the naive concealment-gap framing.
 
