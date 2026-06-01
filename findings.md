@@ -11,6 +11,8 @@
 
 ## 0. Headline numbers (one-glance)
 
+### 0.5B (primary)
+
 | Metric | C_SFT | C_outcome | Δ |
 |---|---|---|---|
 | pass@1 (n=50 asingh15 test) | 28.6% | **53.5%** | +24.9 pp |
@@ -26,6 +28,22 @@
 | Per-problem Spearman (probe_drop vs accuracy_delta) at `<answer>` | — | r=−0.03, p=0.63 | null |
 | Per-problem Spearman at trace-final | — | **r=+0.335, p=4e−7** | sharp +ve decoupling |
 | Causal steering Δ(probe direction − random direction) | — | [−0.07, +0.02] across α | null |
+
+### 1.5B (scale extension)
+
+| Metric | 1.5B C_SFT | 1.5B C_outcome | Δ |
+|---|---|---|---|
+| pass@1 (n=50 test) | 28.0% | **48.0%** | +20.0 pp |
+| pass@1 (n=500 procedural) | 23.6% | **55.8%** | +32.2 pp |
+| Aggregate pre_answer AUROC (L20) | 0.887 | **0.976** | +0.089 |
+| Aggregate assertion AUROC (L20) | 0.844 | **0.936** | +0.092 |
+| **Gap pre−assertion (L20)** | +0.043 | **+0.040** | (stays small, didn't open up like at 0.5B) |
+| Matched-pair % above-diag (L16) | 86% | **82%** | MW p = 0.14 (NS) |
+| Per-problem trace-final AUROC mean | 0.790 | **0.901 (RISE)** | +0.110 |
+| Per-problem Spearman (probe_drop vs accuracy_delta) | — | r = +0.008, p = 0.93 | null |
+| Per-problem dominant quadrant | — | **both improved (63%)** | (not decoupling) |
+
+**Scale interpretation.** Position-decoupling under outcome RL is a small-scale (0.5B) phenomenon. At 1.5B the model maintains a coherent correctness representation across positions throughout RL — the gap stays small (+0.04), the matched-pair distributions are indistinguishable across checkpoints (p = 0.14), and per-problem trace-final AUROC *rises* under RL instead of falling.
 
 **Compute spent so far** (Modal H100 at ~$4/hr, billed to `ayeung16` workspace): ≈ **$25-35** across the n=500 expansion, Option B dynamics, per-layer sweep, causal steering, and the per-problem correlation experiments. RLOO 1.5B currently running (~$30-40 estimated).
 
@@ -493,20 +511,64 @@ The 1.5B SFT is on par with our 0.5B baseline. Adequate starting point for RLOO.
 
 ---
 
-### EXP-13: 1.5B RLOO ⏳
+### EXP-13: 1.5B scale extension (RLOO + cache + analyses) ✅
 
-**Status.** Running on Modal (as of writing this doc). fc `fc-01KT12NNVFRQJMM2GT08062045`, app `ap-dKl60s9uRPeoVEwAXMprfZ`. Last check: step 25/100, ~2 min/step. ETA ~2h more.
+**Question.** Does the position-decoupling story from 0.5B (gap, matched-pair drop, per-problem AUROC fall) reproduce at 1.5B?
 
-**Recipe.** RLOO from 1.5B SFT, 100 steps, snapshots every 10, group_size=8, KL=0.001, batch_size=64, grad_accum=64, temperature 1.0. Same as the 0.5B run except batch/grad_accum reduced from 128/128 for 1.5B memory.
+**Method.**
+1. **SFT**: Qwen2.5-1.5B + `Asap7772/cog_behav_all_strategies` (same data as asingh15 0.5B SFT), 6 epochs lr=1e-5, effective batch 64. → pass@1 = 0.280, pass@16 = 0.700 on n=50 test (essentially matched to 0.5B SFT's 0.286/0.780).
+2. **RLOO**: 100 steps, snapshots every 10, KL=0.001, group_size=8, batch=64, grad_accum=64. reward_mean at step 99 = 0.457. → pass@1 = **0.480** on n=50 (RL added +0.20 pp; 0.5B added +0.25).
+3. **Sample n=500 rollouts** on the procedural set for both 1.5B ckpts (the SFT and the RLOO endpoint).
+4. **Cache hidden states** L12/L16/L20 × {pre_answer, assertion, neutral} for both ckpts. Filter to clean-406.
+5. Run the standard probe analyses (analyze_probes, qualitative_matched_pairs, significance_and_baselines, per-problem trace-final correlation).
 
-**Planned post-completion analyses (queued):**
-1. Cache hidden states on clean-406 at L12/L16/L20 × {pre_answer, assertion, neutral} for both 1.5B ckpts. ~$3-5.
-2. Run the full probe analysis pipeline at 1.5B (analyze_probes, matched_pairs, cross_position_transfer, bootstrap CIs). Local, $0.
-3. Run the per-problem correlation at trace-final (EXP-11 analog) at 1.5B. Local, $0.
-4. Run the per-snapshot Option B dynamics on 1.5B snapshots 30/60/90? Optional, ~$10-15 Modal.
-5. Update writeup with §16 scale comparison.
+**Results.**
 
-**Expected Modal cost when RLOO finishes + downstream:** ≈ $40-50.
+| Metric | 0.5B C_SFT | 0.5B C_outcome | **1.5B C_SFT** | **1.5B C_outcome** |
+|---|---|---|---|---|
+| pass@1 (n=500) | ~0.24 | ~0.55 | **0.236** | **0.558** |
+| pass@1 (n=50 test) | 0.286 | 0.535 | **0.280** | **0.480** |
+| Aggregate pre_answer AUROC (L16) | 0.804 | 0.896 | **0.857** | **0.973** |
+| Aggregate pre_answer AUROC (L20) | 0.821 | 0.901 | **0.887** | **0.976** |
+| Aggregate assertion AUROC (L16) | 0.785 | 0.703 | **0.825** | **0.816** |
+| Aggregate assertion AUROC (L20) | 0.775 | 0.710 | **0.844** | **0.936** |
+| **Gap pre−ass C_outcome (L20)** | **+0.190** | (same row) | **+0.040** | (same row) |
+| Matched-pair % above-diag C_SFT | 78% | (same row) | **86%** | (same row) |
+| Matched-pair % above-diag C_outcome | (same row) | 52% | (same row) | **82%** |
+| Mann-Whitney C_SFT vs C_outcome (matched-pair) | (same row) | **p = 1e−16** | (same row) | **p = 0.14** (NS) |
+| **Per-problem AUROC mean C_outcome** (L16, trace-final) | (same row) | **0.612 (DROP)** | (same row) | **0.901 (RISE)** |
+| **Per-problem probe_drop mean** (trace-final) | (same row) | **+0.130** | (same row) | **−0.113** |
+| Per-problem Spearman (probe_drop vs accuracy_delta) | (same row) | **+0.335, p=4e−7** | (same row) | **+0.008, p=0.93** |
+| Per-problem dominant quadrant | (same row) | decoupling (64%) | (same row) | **both improved (63%)** |
+
+**Headline interpretation.** The position-decoupling story does NOT reproduce at 1.5B:
+- The pre−assertion gap on C_outcome shrinks from +0.19 to **+0.04** (best layer).
+- Matched-pair distributions on C_SFT vs C_outcome are **statistically indistinguishable** at 1.5B (p = 0.14 vs p = 1e−16 at 0.5B).
+- The per-problem trace-final AUROC under RL **rises** at 1.5B (0.79 → 0.90) instead of **falling** at 0.5B (0.72 → 0.61).
+- The dominant per-problem quadrant flips from "decoupling" (64% at 0.5B) to "both improved" (63% at 1.5B).
+
+**Position-decoupling under outcome RL is therefore a small-scale (0.5B) phenomenon.** At 1.5B the model preserves a coherent correctness representation across token positions throughout RLOO training.
+
+**Scripts.**
+- SFT: `modal_train.py sft` (no new script)
+- RLOO: `modal_train.py rloo` (no new script)
+- Rollouts: `extension/evaluation/sample_local_jsonl.py` (existing)
+- Cache: `extension/probe/cache_hidden_states.py` (existing)
+- Filter: inlined Python (renames `C_*_1.5b_*` to `C_*_*` for compatibility with existing analysis scripts)
+- Analyses: all existing scripts re-pointed at the 1.5B cache dir
+
+**Artifacts.**
+- `eval_c_sft_1.5b_n500.json`, `eval_c_outcome_1.5b_n500.json` (committed to repo root)
+- `extension/cache/probe_cache_1.5b_clean406/` (filtered cache, 18 files, ~108 MB)
+- `extension/outputs/n500/probe_behavioral_1.5b/probe_behavioral_correlation_pre_answer.{json,png}`
+
+**Modal cost.** ≈ $30-35 total (~$1 SFT + ~$15-20 RLOO + ~$5-6 rollouts + ~$3-5 cache).
+
+**Caveats (also in writeup §15.4).**
+- 1.5B SFT undertrained relative to asingh15 (no recipe-match attempt).
+- 100 RLOO steps at 1.5B is fewer per-parameter updates than at 0.5B.
+- n=105 valid problems for per-problem correlation (vs 218 at 0.5B); 1.5B C_outcome is too deterministic for many problems to have mixed outcomes in K=16.
+- We did NOT redo Option B dynamics or the cross-position transfer matrix at 1.5B. The scale claim above rests on the aggregate + matched-pair + per-problem evidence. A cleaner pre-paper extension would add those (~$15 Modal, half a day local).
 
 ---
 

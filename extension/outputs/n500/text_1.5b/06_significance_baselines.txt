@@ -1,0 +1,41 @@
+======================================================================================
+[A] Wilcoxon signed-rank test on matched-pair deltas (L16)
+    H0: median delta = 0 (probe ranks correct and wrong equally)
+======================================================================================
+  C_SFT          n=213  median delta = +0.339   W = 21440.0   p (one-sided, > 0) = 3.43e-29
+  C_outcome      n= 57  median delta = +0.147   W = 1526.0   p (one-sided, > 0) = 1.367e-08
+
+======================================================================================
+[B] Mann-Whitney U: are C_SFT and C_outcome matched-pair deltas drawn from the same distribution?
+======================================================================================
+  U = 6635.0   p (one-sided, C_SFT deltas > C_outcome deltas) = 0.1407
+
+======================================================================================
+[C] Paired t-test on per-problem matched-pair deltas (parametric alternative to [A])
+======================================================================================
+  C_SFT          n=213  mean delta = +0.312  t = 16.694   p (one-sided, > 0) = 8.42e-41
+  C_outcome      n= 57  mean delta = +0.304  t = 6.584   p (one-sided, > 0) = 8.417e-09
+
+======================================================================================
+[D] Mann-Whitney U on within-problem Cohen's d distributions (L16)
+======================================================================================
+  C_SFT n=243, mean d=+1.429
+  C_outcome n=120, mean d=+12.865
+  U = 5470.0   p (one-sided, C_SFT d > C_outcome d) = 1
+
+======================================================================================
+[E] Probe-family baselines at L16 (balanced 5-fold CV)
+    LR  = LogisticRegression(C=0.1)        - what we report in the paper
+    RF  = RandomForestClassifier(200 est)  - non-linear baseline
+    MLP = MLPClassifier((128,))            - small non-linear baseline
+    If RF/MLP > LR by >> 0.05, our 'signal is gone' claim is
+    'signal is gone *linearly*' instead.
+======================================================================================
+checkpoint              kind        LR        RF       MLP
+----------------------------------------------------------
+C_SFT             pre_answer     0.854     0.810     0.843
+C_SFT              assertion     0.840     0.816     0.831
+C_SFT                neutral     0.557     0.553     0.568
+C_outcome         pre_answer     0.969     0.960     0.965
+C_outcome          assertion     0.828     0.813     0.829
+C_outcome            neutral     0.584     0.553     0.515

@@ -789,7 +789,89 @@ Modal compute budget consumed for the n=500 expansion + Option B + Phase 2A cach
 
 ---
 
-## 15. Mechanism speculation *(explicit speculation; the experiments distinguish among these only partially)*
+## 15. Scale extension: 1.5B reproduction
+
+**Setup.** We trained Qwen2.5-**1.5B** on `Asap7772/cog_behav_all_strategies` (the same demonstrations our 0.5B `C_SFT` baseline uses — Anikait Singh's recipe) for 6 epochs at lr=1e-5, effective batch 64 (microbatch 4 × grad_accum 16). The result has pass@1 = 0.280 / pass@16 = 0.700 on the n=50 test (essentially tied with the 0.5B `C_SFT`'s 0.286/0.780). We then ran RLOO outcome-only for 100 steps with snapshots every 10 — same recipe as the 0.5B run except batch_size was reduced from 128 to 64 for memory. Reward_mean at step 99 = **0.457**. The post-RLOO model has pass@1 = **0.480** on the n=50 test (1.5B SFT + RL: +0.20 pp; the 0.5B RL added +0.25 pp). On the n=500 procedural set: pass@1 = **0.558** (vs 0.5B C_outcome's 0.55), avg per-rollout acc 0.568. So the 1.5B C_outcome is **slightly stronger** than the 0.5B C_outcome on this set despite undertrained SFT initialization.
+
+We then cached hidden states on both 1.5B checkpoints at L12/L16/L20 × {pre_answer, assertion, neutral} on the procedural n=500 prompts and filtered to clean-406 (same prompt indices as 0.5B). Total Modal compute for the scale extension: ≈ **$30**.
+
+### 15.1 Aggregate probe AUROCs: pre−assertion gap NARROWS at 1.5B
+
+| Cell | 0.5B clean-406 | 1.5B clean-406 |
+|---|---|---|
+| `</think>` AUROC C_SFT (L16) | 0.804 | **0.857** |
+| `</think>` AUROC C_outcome (L16) | 0.896 | **0.973** |
+| `</think>` AUROC C_outcome (L20) | 0.901 | **0.976** |
+| Assertion AUROC C_SFT (L16) | 0.785 | **0.825** |
+| Assertion AUROC C_outcome (L16) | 0.703 | **0.816** |
+| Assertion AUROC C_outcome (L20) | 0.710 | **0.936** |
+| **Gap pre − assertion C_outcome (L16)** | **+0.193** | **+0.157** |
+| **Gap pre − assertion C_outcome (L20)** | **+0.190** | **+0.040** |
+
+At 1.5B the assertion-position probe stays close to trace-final; the position-decoupling gap shrinks from 0.190 (0.5B) to 0.040 (1.5B) at the best layer. The 1.5B model maintains a much more **coherent correctness representation across positions** than the 0.5B model.
+
+### 15.2 Matched-pair within-prompt: no longer significantly different across checkpoints at 1.5B
+
+| | 0.5B C_SFT | 0.5B C_outcome | **1.5B C_SFT** | **1.5B C_outcome** |
+|---|---|---|---|---|
+| Matched-pair n | 244 | 218 | 213 | **57** |
+| Median Δ | +0.186 | +0.004 | **+0.339** | **+0.147** |
+| % above-diag | 78% | 52% | **86%** | **82%** |
+| Wilcoxon p (one-sided > 0) | 1.8e−24 | 0.027 | 3.4e−29 | 1.4e−8 |
+| Mann-Whitney *between* ckpts | 8e−16 (sig) | (same row) | **p = 0.14** (NOT sig) | (same row) |
+
+At 0.5B the Mann-Whitney between the two distributions is p ≈ 1e−16; at 1.5B it is p = **0.14** — the C_SFT and C_outcome matched-pair distributions are **statistically indistinguishable**. The "C_outcome's within-prompt assertion-probe drops to chance" finding from 0.5B does not occur at 1.5B.
+
+Caveat: 1.5B C_outcome's matched-pair n is only 57 (vs 218 at 0.5B) because the model is much more deterministic in K=16 sampling (pass@1 = 0.56; many problems become all-correct, removing them from the mixed-outcome pool).
+
+### 15.3 Per-problem probe-AUROC correlation at trace-final: also weaker / different at 1.5B
+
+Replication of §8.5.1 at 1.5B:
+
+```
+n_problems_used = 105   (vs 218 at 0.5B; smaller because 1.5B C_outcome is more deterministic)
+Spearman r = +0.008,  p = 0.93   (essentially zero — vs +0.335, p=4e−7 at 0.5B)
+```
+
+| Quadrant | 0.5B | 1.5B |
+|---|---|---|
+| Decoupling (probe ↓, accuracy ↑) | **64%** | 16% |
+| Both improved (probe ↑, accuracy ↑) | 26% | **63%** |
+| Noise (probe ↑, accuracy ↓) | 4% | 2% |
+| **Damage** (probe ↓, accuracy ↓) | 0/218 | 3/105 (2.9%) |
+
+**Per-problem AUROC distributions:**
+
+| | 0.5B C_SFT | 0.5B C_outcome | 1.5B C_SFT | 1.5B C_outcome |
+|---|---|---|---|---|
+| mean | 0.722 | **0.612 (DROP)** | 0.790 | **0.901 (RISE)** |
+| median | 0.741 | 0.638 | 0.818 | 1.000 |
+| probe_drop mean | (sft−out) | **+0.130** | (sft−out) | **−0.113** |
+
+At 0.5B the per-problem trace-final AUROC *falls* under RL (probe_drop +0.13). At 1.5B it *rises* (probe_drop −0.11). The qualitative direction has flipped, and the dominant quadrant has shifted from "decoupling" (64% at 0.5B) to "both improved" (63% at 1.5B).
+
+### 15.4 Interpretation — position-decoupling is a small-scale phenomenon
+
+Three pieces of evidence at 1.5B point the same way:
+1. **Aggregate gap shrinks** (§15.1): pre − assertion drops from 0.19 to 0.04 at the best layer.
+2. **Within-prompt matched-pair distributions become statistically indistinguishable** (§15.2): Mann-Whitney p = 0.14 at 1.5B vs 1e−16 at 0.5B.
+3. **Per-problem AUROC under RL flips from drop to rise** (§15.3): mean probe_drop −0.11 at 1.5B vs +0.13 at 0.5B; dominant quadrant is "both improved" (63%) rather than "decoupling" (64% at 0.5B).
+
+**The position-decoupling story under outcome RL appears to be specifically a small-scale (0.5B) phenomenon.** At 1.5B, the model maintains a coherent correctness representation across token positions throughout RLOO training. The within-problem probe discrimination is preserved (and slightly strengthened) at the trace-final position, instead of weakening as at 0.5B.
+
+**Open question for future work.** Does this fit with Yuan et al.'s "concealment gap widens under outcome RL at 1.5B+" finding? Their gap was probe-vs-verbalized; we measured probe-vs-probe across positions. The relationship isn't direct. If at 1.5B the *internal* representation stays coherent across positions but the *verbalized* signal still diverges (as Yuan reports), that would imply Yuan's gap is at the verbalization-readout level (not in the hidden-state representation itself). Confirming this would require running their elicitation methodology on our 1.5B C_outcome — out of scope here (the SFT'd-on-Countdown base is not chat-tuned for graded confidence elicitation; see writeup §6).
+
+**Caveats for this scale comparison:**
+- Our 1.5B SFT was undertrained relative to the asingh15 0.5B SFT recipe (6 epochs at lr=1e-5; we did not match their hyperparameters exactly).
+- We ran 100 RLOO steps at both scales — at 1.5B that's effectively fewer optimizer updates per parameter. The reward_mean at step 99 was 0.46 (vs ~0.5 at 0.5B). Stronger RL convergence at 1.5B might reveal a different pattern; we did not extend.
+- n=105 at 1.5B (vs 218 at 0.5B) per-problem comparison: smaller statistical power.
+- We did not run Option B dynamics or the per-layer sweep at 1.5B. The aggregate scale claim above is from §15.1 alone; the rest are corroborating per-problem evidence.
+
+The cleanest pre-paper extension: redo Option B dynamics at 1.5B (~$10-15 Modal) and the cross-position transfer matrix at 1.5B (free, local) to confirm the position-coherence claim mechanistically. Out of scope for this round.
+
+---
+
+## 16. Mechanism speculation *(explicit speculation; the experiments distinguish among these only partially)*
 
 We observe position-decoupling that emerges over outcome RL, with the model's commit-time belief reflecting its commit (not the original correct answer). The experiments do not pin down *why* the decoupling occurs. Three candidate mechanisms, in roughly decreasing parsimony:
 
