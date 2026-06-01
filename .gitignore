@@ -26,9 +26,10 @@ wandb/
 logs/
 *.log
 
-# Eval / analysis artifacts (large; reproducible from checkpoints)
-eval.json
-eval_*.json
+# Eval JSONs: keep in repo (small, reproducibility anchors)
+# (Earlier these were ignored; now version-controlled per user request.)
+
+# Analysis artifacts (still ignored; large or trivially reproducible)
 extension/cache/
 extension/outputs/
 *.npz
