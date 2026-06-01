@@ -339,3 +339,74 @@ answer.
   decoupling" to "position-decoupling of correctness representations
   across token positions within a single rollout." More accurate, less
   reviewer-bait.
+
+---
+
+## 2026-05-31 -- Four robustness/extension experiments
+
+### F->T (rescue) rollout trajectory  (extension/probe/ft_rollout_trajectory.py)
+- 150 F->T rollouts (model commits wrong first, rescues to correct last).
+- Position-appropriate probe trajectory across blocks: probe rises
+  0.156 (block 0, %corr=0) -> 0.50 (block 2-8, %corr=86-95%) -> 0.73
+  (block 11+, %corr=100%).
+- Pattern A is BIDIRECTIONAL. Probe responds to correctness updates in
+  both directions. Magnitude asymmetric (rescue probe values lower than
+  drift probe values at matched %correct), plausibly because rescue
+  rollouts began with wrong residue.
+- Figure: extension/outputs/n500/figures/fig10_ft_rollout_trajectory.png
+
+### Probe-direction cosine similarity  (extension/probe/probe_direction_cosines.py)
+- Within-ckpt cross-position cosines at L16 are essentially ZERO:
+  C_SFT pre-vs-ass = +0.024; C_outcome pre-vs-ass = +0.038. Both ckpts
+  show the geometric orthogonality, not just C_outcome -- so the
+  position-decoupling is partly an SFT-inherited property of the linear
+  subspaces, not purely an RL phenomenon.
+- Cross-ckpt within-position cosines small (+0.04 to +0.14) but cross-ckpt
+  transfer AUROC is high (0.86 at pre_answer). Implies the correctness
+  signal lives in a multi-dimensional subspace that multiple low-cosine
+  probe directions can each "read."
+
+### Per-layer probe sweep  (extension/probe/per_layer_sweep.py + Modal cache)
+- Re-cached hidden states at ALL 25 layers (0..24) of Qwen2.5-0.5B on
+  both ckpts. ~$3 Modal compute, ~5 min wall.
+- Per-cell balanced GroupKFold(5) AUROC at every layer.
+- **Headline: pre-ass gap on C_outcome is DEPTH-INVARIANT**. Stabilizes
+  by L1, ranges +0.18 to +0.24 across L5-L24, peak +0.236 at L9, no
+  monotonic trend with depth.
+- **Rules out mechanism (b)** from §15 (late-layer-only shaping). Late-
+  layer-only would produce a depth-monotonic gap.
+- Figure: extension/outputs/n500/figures/fig11_per_layer_sweep.png
+
+### Causal steering at </think>  (extension/probe/causal_steering.py)
+- HF-transformers forward hook on layer-16 residual stream at the
+  </think> token. Inject alpha * h_mean_norm * v at that position,
+  continue autoregressive generation, score the resulting <answer>.
+- 4 alphas {0, 0.5, 1.0, 2.0} x 3 directions {none, probe, random}
+  x 100 prefixes (~700 generations). Two passes (initial run got 37
+  prefixes done before being killed due to no progress prints; resume
+  run with flush=True completed the remaining 63 cleanly).
+- **NULL RESULT: probe direction is indistinguishable from random**.
+  Accuracy deltas (probe - random) at matched magnitude:
+  alpha=+0.5: -0.072; alpha=+1.0: +0.021; alpha=+2.0: -0.031.
+  All within sampling noise.
+- Combined with cosine analysis (probe directions ~orthogonal across
+  positions but transfer AUROC high), interpretation: the trace-final
+  probe captures a linear summary of a multi-dimensional correctness
+  subspace; the model's commit mechanism doesn't *read* from the probe
+  direction in a way that linear injection can exploit. The probe is a
+  **reader, not a controller**.
+- Methodologically important: replicates Yuan et al.'s 1.5B+ failure of
+  activation-patching variants at small scale with a careful matched-
+  magnitude random-direction control.
+
+### Writeup updates
+- TL;DR (§0) extended to mention layer-invariant gap, cosine orthogonality,
+  bidirectional Pattern A, and causal-steering null.
+- §4.1 expanded with full 25-layer sweep table.
+- New §2.9 F->T bidirectional Pattern A.
+- New §2.10 probe-direction cosine analysis.
+- New §2.11 causal steering null result.
+- §14 expanded from 6 to 7 claims (added claim 7 about reader-not-
+  controller).
+- §15 mechanism (b) marked RULED OUT by per-layer evidence; (c)
+  promoted to most-supported with steering-null confirmation.

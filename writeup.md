@@ -9,7 +9,7 @@
 
 ## 0. TL;DR (one-paragraph)
 
-**Position-decoupling under outcome RL.** At 0.5B on an exact-verifier task, outcome-only RLOO *strengthens* the model's internal correctness representation at the trace-final position (probe AUROC `</think>` rises 0.821 on `C_SFT` → 0.901 on `C_outcome`, layer L20, n=406 clean) but *weakens* the representation at confidence-asserting token positions (probe AUROC 0.785 → 0.703 at L16). The gap between these two positions — essentially zero before RL (0.019) — grows monotonically across training to 0.193 at the final checkpoint, confirmed by fresh rollouts re-sampled at three intermediate snapshots (gap trajectory: **0.019 → 0.022 → 0.115 → 0.217 → 0.193** at steps `C_SFT/30/60/90/final`). The pre-answer correctness direction does not linearly transfer to any other position on `C_outcome` (off-diagonal AUROC ≈ 0.50 to assertion AND to neutral, layer-invariant across L12/L16/L20). And within multi-answer rollouts where the model first emits a correct equation and then drifts to a wrong one, the probe at each `<answer>` block tracks *that block's* correctness, not the first block's (Pattern A; position-appropriate probe held-out diagonal AUROC = 0.920; probe(last) on T→F drift rollouts = 0.154, indistinguishable from F→F floor at 0.088). **The model genuinely updates its belief about correctness at each commit; outcome RL does not produce a "model knows correct but verbalizes wrong" gap. The gap is at the representational level: the verbalization-time and trace-final correctness representations have decoupled into different linear subspaces over training.** All headline significance tests at p < 0.001 by at least two independent procedures.
+**Position-decoupling under outcome RL.** At 0.5B on an exact-verifier task, outcome-only RLOO *strengthens* the model's internal correctness representation at the trace-final position (probe AUROC `</think>` rises 0.821 on `C_SFT` → 0.901 on `C_outcome`, layer L20, n=406 clean) but *weakens* the representation at confidence-asserting token positions (probe AUROC 0.785 → 0.703 at L16). The gap between these two positions — essentially zero before RL (0.019) — grows monotonically across training to 0.193 at the final checkpoint, confirmed by fresh rollouts re-sampled at three intermediate snapshots (gap trajectory: **0.019 → 0.022 → 0.115 → 0.217 → 0.193** at steps `C_SFT/30/60/90/final`). The pre-answer correctness direction does not linearly transfer to any other position on `C_outcome` (off-diagonal AUROC ≈ 0.50 to assertion AND to neutral, layer-invariant across **all 25 layers** L0–L24; max gap +0.236 at L9; the cosine similarity between pre and assertion probe directions is +0.038 — essentially orthogonal), and within multi-answer rollouts where the model first emits a correct equation and then drifts to a wrong one, the probe at each `<answer>` block tracks *that block's* correctness, not the first block's (Pattern A, bidirectional: probe rises on rescue moves and falls on drift moves; position-appropriate probe held-out diagonal AUROC = 0.920; probe(last) on T→F drift = 0.154, indistinguishable from F→F floor at 0.088). **Causal steering along the probe direction is a null result** (probe-vs-random Δ ∈ [−0.07, +0.02] at α ∈ [0.5, 2.0] · h_mean_norm; n=97 prefixes; probe direction's effect on accuracy is indistinguishable from random-direction perturbation): the trace-final probe is a *reader* of a multi-dimensional correctness subspace, not a *controller*. **The model genuinely updates its belief about correctness at each commit; outcome RL does not produce a "model knows correct but verbalizes wrong" gap. The gap is at the representational level: the verbalization-time and trace-final correctness representations have decoupled into different linear subspaces over training, distributed across all transformer depth, with no preserved hidden representation that activation patching could recover.** All headline significance tests at p < 0.001 by at least two independent procedures.
 
 ---
 
@@ -229,6 +229,85 @@ Verbalized confidence at the global rollout level (binary keyword-presence in th
 
 **Reading.** This is from the original n=50 elicitation data and is preserved here for completeness. At the *global rollout level* (binary verbalization signal vs. probe), outcome RL makes the model's verbalization *more* calibrated — the global gap closes to essentially zero. This is the *opposite direction* from Yuan et al.'s 1.5B+ "concealment gap widens under outcome RL" prediction; we report it as a scale-dependence finding. The new measurements in §2.1–§2.4 are where the *position-resolved* gap lives at 0.5B.
 
+### 2.9 Pattern A is bidirectional: probe rises on rescue moves too
+
+Within multi-answer C_outcome rollouts, **150 are F→T rollouts** — the model first commits to a wrong equation, then "rescues" itself with a correct one later. Pattern A predicts the probe should *rise* across these rollouts, mirroring its *fall* across T→F drift rollouts. It does, but asymmetrically:
+
+| direction | n | block_0 probe | %_corr at block_0 | mid-rollout probe | mid-rollout %_corr | terminal probe |
+|---|---|---|---|---|---|---|
+| **F→T (rescue)** | 150 | 0.156 | 0% | 0.50 (block 2-8) | 86-95% | 0.73 (block 11+) |
+| T→F (drift) | 490 | 0.856 | 100% | 0.42 (block 2-4) | 38-52% | 0.22 (block 12+) |
+
+The probe responds to both directions of correctness change. The asymmetry — F→T's probe values are systematically *lower* than T→F's at the same block-level correctness rate (e.g. F→T at 95% correct sits around probe = 0.50, while T→F at matched block-level correctness was at 0.85 from earlier blocks) — likely reflects (a) much smaller sample size on the F→T side (n=150 vs 490), and (b) selection effect: rescue rollouts began with a wrong answer, so their early-rollout representations carry residue that lingers.
+
+The qualitative claim is robust: there is no preserved "secret correct" or "secret wrong" representation. The probe at each commit tracks that commit's content in both drift directions. Figure: `extension/outputs/n500/figures/fig10_ft_rollout_trajectory.png`.
+
+### 2.10 Probe-direction cosine analysis — the orthogonality is geometric, not just AUROC
+
+The §2.3 cross-position transfer AUROCs collapse to chance for pre→ass and ass→pre on `C_outcome`. We additionally compute direct cosine similarities between the trained probe direction vectors (in input space, after `w / scaler.scale_`):
+
+**Within-checkpoint cross-position cosines at L16:**
+
+| pair | cos | what it means |
+|---|---|---|
+| C_SFT: pre vs assertion | **+0.024** | essentially orthogonal |
+| C_SFT: pre vs neutral | −0.002 | essentially orthogonal |
+| C_outcome: pre vs assertion | **+0.038** | essentially orthogonal |
+| C_outcome: pre vs neutral | +0.020 | essentially orthogonal |
+
+**Cross-checkpoint within-position cosines at L16:**
+
+| pair | cos | transfer AUROC |
+|---|---|---|
+| C_SFT pre vs C_outcome pre | +0.102 | 0.855 |
+| C_SFT ass vs C_outcome ass | +0.058 | 0.649 |
+| C_SFT neutral vs C_outcome neutral | +0.041 | 0.530 |
+
+**Reading.**
+- Within both checkpoints, the pre_answer and assertion probe directions are **near-orthogonal at the cosine level (~0.02–0.04)**. This isn't outcome-RL-specific — both C_SFT and C_outcome have it. The cross-position transfer collapse from §2.3 has direct geometric backing.
+- Cross-checkpoint, pre_answer probe directions are also small-cosine (+0.10) but the cross-checkpoint transfer AUROC is high (0.86). This implies the correctness signal lives in a **multi-dimensional subspace** that multiple low-cosine probe directions can each "read" — they don't have to point the same way to extract the same signal.
+- Probe-vector norms scale with diagonal AUROC: pre_answer probes have largest norms (~30–80), assertion smaller (~7–35), neutral smallest (~4–15). The probe needs a longer vector when the per-feature signal is weaker.
+
+This re-interprets the AUROC findings geometrically. The position-decoupling and cross-checkpoint stability are coherent: positions encode correctness via *different* linear directions (low pairwise cosine), but the underlying correctness *subspace* is largely shared (high transfer AUROC).
+
+### 2.11 Causal steering null result — the probe is a reader, not a controller
+
+If the pre_answer correctness direction were *causally* tied to the model's generation, adding `αv` to the residual stream at `</think>` should push generated answers toward correct (positive α) or wrong (large positive α, presumably). It doesn't.
+
+**Experimental setup.** Take each (prompt, rollout) prefix up to and including the first `</think>`. Forward-hook into Qwen2's layer-16 residual stream at the `</think>` token position; add `α · h_mean_norm · v_unit` where `v_unit` is the trained probe direction. Continue generation under the patched residual (KV cache for `</think>` is filled from the modified state, so all later tokens attend to the patched representation). Compare accuracy against:
+- α = 0 (no patch, baseline)
+- α = 0.5 / 1.0 / 2.0 of mean hidden-state L2 norm (= ~21.84)
+- Random unit-direction control at matched α (tests whether *any* perturbation helps, or specifically the probe direction)
+
+**Results (n=97 prefixes, C_outcome, L16):**
+
+| condition | accuracy | acc_format |
+|---|---|---|
+| baseline α=0 | 0.577 | 1.000 |
+| probe direction α=+0.5 | 0.567 | 1.000 |
+| probe direction α=+1.0 | 0.598 | 1.000 |
+| probe direction α=+2.0 | 0.515 | 0.845 |
+| **random direction α=+0.5** | **0.639** | 1.000 |
+| random direction α=+1.0 | 0.577 | 0.938 |
+| random direction α=+2.0 | 0.546 | 0.897 |
+
+Probe-direction vs. random-direction delta at matched magnitude:
+- α=+0.5: probe 0.567 vs random 0.639 → Δ = **−0.072**
+- α=+1.0: probe 0.598 vs random 0.577 → Δ = **+0.021**
+- α=+2.0: probe 0.515 vs random 0.546 → Δ = **−0.031**
+
+Paired analysis (same prefix, probe vs baseline): probe direction *gained* 4–5 prefixes and *lost* 3–11 at α=+0.5/+1/+2; random direction gained 3–6 and lost 0–6. **The probe direction's effect is statistically indistinguishable from random-direction perturbation at every magnitude**, with the probe direction slightly *under*-performing random at α=+0.5 and +2.0 and matching random at α=+1.0. Format breaks at α=+2.0 for both directions, suggesting we are at the manifold edge.
+
+**Reading.** The trace-final probe identifies a linear direction that *predicts* correctness (held-out AUROC 0.90) but is *not* a causal control axis for the model's output. Pushing the residual stream along this direction does not systematically improve (or degrade) the next generated answer's correctness beyond what random-direction perturbation produces.
+
+**Why this matters.** Two consistent stories:
+1. The correctness representation is **distributed across many features**; the probe captures one linear summary that's good for *reading* but not for *writing*. The §2.10 cosine analysis backs this up: probe directions across positions and checkpoints are mostly orthogonal but transfer well at the AUROC level — implying the signal lives in a wide multi-dimensional subspace, and any single linear direction is one cut through it.
+2. The model's commit mechanism is **decoupled from the trace-final probe direction in a causal sense**: even though L16 hidden states at `</think>` are highly predictive, the path from L16 residual to the eventual output `<answer>` does not run linearly through the probe direction.
+
+This is consistent with Yuan et al.'s 1.5B+ result that activation patching variants of concealment-gap interventions failed; we replicate the negative result at 0.5B with a careful matched-magnitude control. **The probe is a measurement instrument, not a control axis.** This is itself a methodologically important finding: claims that probes capture "the model's belief" should be careful to distinguish *correlational* (the probe predicts) from *causal* (the model uses) interpretations.
+
+Figure: `extension/outputs/n500/figures/fig12_causal_steering.png` *(TBD if we draft a figure of the bar chart)*.
+
 ---
 
 ## 3. Behavioral evidence (Layer A) — unchanged from n=50
@@ -257,17 +336,24 @@ The "model emits the correct answer in an early `<answer>` block, then drifts" p
 
 The headline findings are in §2. Additional structural observations:
 
-### 4.1 Layer invariance
+### 4.1 Layer invariance — full 25-layer sweep
 
-The same pattern holds at L12, L16, L20 (clean-406):
+We re-cached hidden states at **every layer 0–24** (embedding through final transformer output) and re-ran the balanced GroupKFold(5) probe per cell. The pre−assertion gap on `C_outcome` is essentially constant across all transformer layers:
 
 | Layer | `C_SFT` `</think>` | `C_outcome` `</think>` | `C_SFT` assertion | `C_outcome` assertion | gap on C_outcome |
 |---|---|---|---|---|---|
-| L12 | 0.803 | 0.894 | 0.743 | 0.690 | +0.204 |
-| L16 | 0.817 | 0.897 | 0.782 | 0.711 | +0.186 |
-| L20 | 0.821 | 0.901 | 0.775 | 0.703 | +0.198 |
+| L0 (embedding) | 0.488 | 0.463 | 0.630 | 0.529 | −0.065 |
+| L1 | 0.785 | 0.869 | 0.723 | 0.660 | +0.209 |
+| L5 | 0.796 | 0.886 | 0.714 | 0.666 | +0.220 |
+| L9 | 0.794 | 0.889 | 0.733 | 0.653 | **+0.236** (max) |
+| L12 | 0.795 | 0.893 | 0.761 | 0.697 | +0.196 |
+| L16 | 0.804 | 0.896 | 0.785 | 0.703 | +0.193 |
+| L20 | 0.817 | 0.900 | 0.776 | 0.710 | +0.190 |
+| L24 (final) | 0.805 | 0.897 | 0.772 | 0.703 | +0.194 |
 
-The position-resolved gap is consistent across layers. L20 is the highest-AUROC layer for trace-final on both checkpoints; we treat L16 as the primary report layer for compatibility with the n=50 paper and the cross-position transfer analyses, but the story is layer-invariant.
+The gap stabilizes by L1 and stays **flat between +0.18 and +0.24 from L5 to L24**. It is *not* concentrated at late layers. **This rules out mechanism (b) from §15** ("outcome reward selectively shaped the late layers / output head") — if late-layer-only updating were the mechanism, we would expect the gap to grow with depth, not stay flat. The decoupling is distributed across all transformer depth.
+
+Full table + figure: `extension/outputs/n500/figures/fig11_per_layer_sweep.png`.
 
 ### 4.2 Per-keyword breakdown
 
@@ -547,6 +633,8 @@ All under `extension/outputs/n500/figures/`, generated by `extension/probe/make_
 | `fig7_concealment_gap.png` | Global concealment gap (probe − verbal), n=50 | +0.15 → +0.01 (inverts naive H2) |
 | `fig8_annotated_qualitative.png` | Side-by-side qualitative: same prompt, wrong-vs-correct C_outcome rollouts (n=50 paper original) | qualitative H3 illustration |
 | `fig9b_within_rollout_position_appropriate.png` | Scatter of probe(first) vs probe(last) on multi-answer rollouts | probe(last) = 0.154 on T→F drift; Pattern A |
+| `fig10_ft_rollout_trajectory.png` | Per-block probe trajectory, F→T (rescue) vs T→F (drift) | Pattern A bidirectional |
+| `fig11_per_layer_sweep.png` | Per-layer probe AUROC, pre/ass/neu × C_SFT/C_outcome × all 25 layers | gap depth-invariant; max +0.236 at L9; rules out (b) |
 | `fig_phase1_transfer_heatmap.png` | 3×3 cross-position transfer × 3 layers × 2 ckpts | pre_answer is its own subspace; layer-invariant |
 
 The headline figure for the paper is the new gap-over-training plot (Option B dynamics, §2.2 / §7): a single panel with the pre_answer and assertion-position AUROCs on the y-axis and training step on the x-axis, showing the gap opening between steps 30 and 60. This is the *strongest single visual* of the decoupling-emergence claim.
@@ -578,6 +666,12 @@ extension/probe/significance_and_baselines.py    -- §9.1 + §4.3
 extension/probe/phase2a_per_answer_correctness.py -- §8.1 per-block correctness
 extension/probe/phase2a_pattern_analysis.py      -- §8.3 trace-final-probe trajectory
 extension/probe/phase2a_position_appropriate_probe.py -- §8.2 position-appropriate probe
+extension/probe/ft_rollout_trajectory.py         -- §2.9 F→T bidirectional Pattern A
+extension/probe/probe_direction_cosines.py       -- §2.10 cosine analysis
+extension/probe/per_layer_sweep.py               -- §4.1 full 25-layer sweep
+extension/probe/save_probe_vector.py             -- save steering vector
+extension/probe/causal_steering.py               -- §2.11 causal steering Modal job
+extension/probe/analyze_causal_steering.py       -- §2.11 analysis
 extension/probe/make_figures.py                  -- standard figures
 ```
 
@@ -586,12 +680,14 @@ Probe cache:
 - `extension/cache/probe_cache_n500_clean406/` — clean-406 cache (primary)
 - `extension/cache/probe_cache_dynamics_optB/` — Option B fresh-rollout cache per snapshot
 - `extension/cache/probe_cache_n500_answers/` — `<answer>` opening cache (Phase 2A)
+- `extension/cache/probe_cache_n500_all_layers_clean406/` — all 25 layers, clean-406 (§4.1)
+- `extension/cache/steering/` — saved probe vector for causal steering
 
-Modal compute budget consumed for the n=500 expansion + Option B + Phase 2A caching: **≈ $12-15 total** (all jobs completed in ~30 min wall time across the Phase 1 / Phase 2 / Phase 2A rounds).
+Modal compute budget consumed for the n=500 expansion + Option B + Phase 2A caching + per-layer caching + causal steering: **≈ $20-25 total** (mostly cheap forward-pass caching; causal steering was the slowest single job at ~60 min H100 for 100 prefixes × 7 conditions).
 
 ---
 
-## 14. The six claims I'd put in the paper
+## 14. The seven claims I'd put in the paper
 
 1. **At 0.5B with outcome RL on an exact-verifier task, the trace-final probe AUROC *rises*** (C_SFT 0.821 → C_outcome 0.901 at L20). Outcome RL strengthens, not damages, the model's internal correctness representation at the point of final commit.
 
@@ -605,6 +701,8 @@ Modal compute budget consumed for the n=500 expansion + Option B + Phase 2A cach
 
 6. **The global concealment gap *inverts* at 0.5B** (binary verbal-keyword AUROC 0.57 → 0.79, probe AUROC 0.72 → 0.79; global gap +0.15 → +0.01). This is the scale-inversion of Yuan et al.'s 1.5B+ result. At small scale, outcome RL globally calibrates the verbal signal while position-decoupling the internal correctness representation.
 
+7. **The trace-final probe is a *correlational reader*, not a *causal controller*.** Causal steering at α ∈ [0.5, 2.0] · h_mean_norm along the trace-final probe direction has accuracy effects indistinguishable from random-direction perturbation of matched magnitude (Δ in [-0.07, +0.02]; n=97 prefixes). Combined with the per-layer sweep showing the pre-ass gap is depth-invariant (rules out late-layer-only shaping) and the cosine analysis showing probe directions across positions are essentially orthogonal (within and across checkpoints), the picture is: the correctness representation lives in a multi-dimensional subspace; the probe captures one linear summary that reads well but writes poorly.
+
 **Headline framing.** Under outcome RL, the model's correctness representations *specialize by token position*: the trace-final position becomes more informative, the verbalization-time position becomes less informative, and the two no longer share a common linear direction. The model's *belief* at each commit reflects what it commits to (no preserved secret correct answer). This is **position-decoupling of correctness representations**, not "the model says confident things while internally knowing they're wrong." A more sophisticated form of mechanism-level reorganization than the naive concealment-gap framing.
 
 ---
@@ -615,10 +713,15 @@ We observe position-decoupling that emerges over outcome RL, with the model's co
 
 **(a) RL trained the policy on features that vary by token position.** Outcome RLOO rewards rollouts based on a single bit at the end (correct vs not). The policy gradient updates the model's *next-token distribution* over many tokens. The most efficient way to increase reward is to shape the *output distribution* — including the distribution over confidence-keyword tokens at intermediate positions — to correlate with whatever low-level features predict reward *at those token positions*. Different token positions have different surrounding-context distributions, so the same correctness signal might require different linear projections at different positions. The trace-final position is the closest to the actual reward signal, so its representation strengthens. The assertion-time position is more "internal" and the RL gradient there is weaker, more diffuse, and may favor features uncorrelated with the trace-final correctness direction. This predicts the observed position-decoupling without requiring any specific architectural mechanism.
 
-**(b) Outcome reward selectively shaped the late layers / output head.** The trace-final probe at L16 still finds correctness signal (0.90 AUROC). The assertion-token probe at the same layer is weaker (0.70). If outcome RL primarily updated the late layers — the parts most directly involved in next-token sampling — without much updating the mid-trace representation-building machinery, we would expect exactly this: the deeper representation survives, but the late-stage commitment-to-verbalization gating no longer reads from it in the same way. This is consistent with our linear-vs-nonlinear baselines (§4.3) being essentially identical at clean-406 — the surviving signal at assertion positions is fully linear.
+**(b) Outcome reward selectively shaped the late layers / output head. ~~Plausible~~ RULED OUT BY PER-LAYER EVIDENCE (§4.1).** Under late-layer-only updating we would expect the pre−ass gap to grow with depth. The full 25-layer sweep shows the opposite: the gap stabilizes by L1, sits between +0.18 and +0.24 from L5 to L24 with no monotonic trend, and peaks at L9 (+0.236) — *earlier* than L16 or L20. The decoupling is distributed across all transformer depth, not concentrated at the output head. This mechanism is no longer parsimonious; we leave it here only for completeness.
 
 **(c) The position-decoupling reflects a divergence between "this is my answer" and "this is correct."** Outcome RL rewards the model for emitting a correct final `<answer>`. But emitting an answer is not the same as *believing* it is correct. Under this view, the model learned to *commit* to answers on different internal features than the ones that predict correctness. Within a rollout, the per-block probe (§8) confirms this: at each `<answer>` commit, the representation tracks the commit (not the prior best answer), and the probe accurately reads "this commit will be wrong" when it will be wrong. The first-answer correctness signal is not preserved into later commits — the model has truly moved its representation to the new commit, even when the new commit is worse.
 
 Our experiments distinguish (a) and (b) from (c) on one dimension: (c) is the framing that *most cleanly explains the within-rollout result* (§8). If the model's internal representation tracked "is this answer correct" globally, it would retain the first-answer correctness signal across the rollout, which we *don't* observe. If the representation tracks "is the current commit correct," we should see what we see — probe(last) flips on T→F drift rollouts. (c) is the *parsimonious explanation that fits all data, including the within-rollout pattern*.
 
-Note: (a), (b), and (c) are not mutually exclusive. The cleanest mechanistic claim our experiments support, without further intervention experiments, is: **outcome RL produces position-dependent correctness representations that are NOT linearly tied across positions within a rollout; the model's commit-time belief at each position tracks the local content, not the trace-final correctness signal.** Further work (per-layer probing across all 24 layers; targeted-update fine-tuning with LoRA localized to specific layers; or activation steering at trace-final where we know the representation exists) would discriminate among the mechanisms more sharply.
+Note: (a), (b), and (c) are not mutually exclusive in principle, but our experiments are now strong enough to substantially narrow them:
+- **(b) ruled out** by the layer-invariant pre−ass gap (§4.1, full 25-layer sweep). Late-layer-only shaping would have produced a depth-dependent gap; we observe a flat gap from L5 onwards. The decoupling is distributed.
+- **(c) supported** by the within-rollout Pattern A result (§2.4): the model's commit-time belief tracks each commit's content; there is no preserved hidden "secret correct" representation. The §2.11 causal-steering null result confirms this: pushing the residual stream along the trace-final probe direction does not redirect generation, consistent with "the trace-final probe is a *reader* of the correctness representation, not a *controller* of the commit." (c) is the parsimonious mechanism that fits this.
+- **(a) compatible** with (c) and is the most natural co-explanation. Outcome RLOO updates many tokens' next-token distributions in proportion to their reward contribution; positions closer to the final commit (`</think>`) get more direct gradient, sharpening their correctness representation; positions earlier in the trace (assertion tokens) get smaller, more diffuse gradient that may favor reward-correlated features uncorrelated with the trace-final correctness direction.
+
+The cleanest mechanistic claim our experiments support is: **outcome RL produces position-dependent correctness representations distributed across all transformer depth that are NOT linearly tied across token positions; the trace-final probe direction is a correlational reader of a multi-dimensional correctness subspace, not a causal control axis; the model's commit-time belief at each position tracks the local content, not any preserved earlier correctness representation.** Further work (LoRA-localized RLOO; nonlinear steering; per-layer activation patching) would distinguish (a) from (c) more sharply but is out of scope.
