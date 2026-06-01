@@ -1,0 +1,13 @@
+Assertion-position relabel experiment on C_outcome 0.5B L16 clean-406
+
+  Original labels (verifier-scored final correctness):
+    n_balanced/class = 890
+    AUROC = 0.7030
+
+  Corrected labels (next-<answer>-block correctness):
+    n_balanced/class = 457
+    AUROC = 0.8523
+
+  Δ AUROC: +0.1493
+  517/4043 rows had different labels after correction
+  Original pos%: 0.780; New pos%: 0.887
