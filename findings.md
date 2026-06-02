@@ -752,6 +752,28 @@ No combination beats pre_answer-alone. The trace-final probe saturates the signa
 
 ---
 
+### EXP-19d: Probe-adaptive test-time budget allocation ✅
+
+**Question.** Given a fixed total rollout budget across N prompts, does probe-adaptive allocation (give more rollouts to less-confident prompts) beat uniform allocation (same K per prompt + best-of-K)?
+
+**Setup.** `extension/probe/probe_adaptive_budget.py`. Threshold-waterfill strategy: round 1 generate 1 rollout per prompt; rounds 2+ give one more rollout to any prompt whose best probe score is below T (priority: lowest current best first). Compare to uniform K-per-prompt + best-of-K at matched total budget. N=288 prompts with all 16 rollouts cached.
+
+**Results (T=0.95):**
+
+| K_avg | Uniform | Adaptive T=0.95 | Lift |
+|---|---|---|---|
+| 2 | 0.795 | **0.816** | +2.1 pp |
+| **4** | 0.806 | **0.830** | **+2.4 pp** |
+| 6 | 0.809 | 0.830 | +2.1 pp |
+| 8 | 0.809 | 0.830 | +2.1 pp |
+| 16 | 0.823 | 0.830 | +0.7 pp |
+
+At K_avg=4, adaptive allocation matches the full-budget K=16 uniform accuracy with **1/4 the compute**. The strategy gives ≤3 rollouts to easy prompts (round 1 crosses T=0.95) and pushes 43 hard prompts up to all 16. The probe identifies easy-vs-hard after just one rollout (cf. EXP-19a, probe mean has r=0.97 with per-prompt accuracy).
+
+**Output.** `extension/outputs/n500/text/36_probe_adaptive_budget.txt`. Figure: `extension/outputs/n500/figures/fig23_probe_adaptive_budget.png`.
+
+---
+
 ### EXP-19: First-answer reward RLOO (verifier-level remedy) ⏳
 
 **Question.** The rambling at 0.5B C_outcome is a reward-hack of the verifier's "last-`<answer>`-block wins" rule (§3.1, §7 in writeup). If we monkey-patch the verifier to score the FIRST `<answer>` block instead, does the rambling go away while accuracy is preserved? This is the verifier-level equivalent of probe-as-reward-shaping (the probe is a near-oracle predictor of first-block correctness, so the two reward signals are equivalent).

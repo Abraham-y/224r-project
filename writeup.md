@@ -1027,7 +1027,31 @@ Combining probe scores from multiple positions (pre_answer + assertion + neutral
 
 Note: the pass@1 baseline here (0.748) is on the 357-prompt subset where every rollout has at least one assertion + neutral position — a biased-easier subset than the full 406. So the absolute lifts here are smaller than §18.1's; the rank ordering of strategies is the comparison.
 
-### 18.8 First-answer reward RLOO — the verifier-level cure for the rambling reward-hack
+### 18.8 Probe-adaptive test-time budget allocation
+
+Given a fixed total budget of B rollouts across N prompts, should you spend them uniformly (B/N each, then best-of-K) or adaptively (give more compute to the prompts where the probe is least confident)? Script: `extension/probe/probe_adaptive_budget.py`. Simulation uses the cached 16 rollouts per prompt as the rollout pool, generating one at a time; the adaptive strategy re-prioritizes after each rollout's probe is revealed.
+
+**Threshold-waterfill strategy.** Round 1: generate 1 rollout per prompt. Rounds 2..R: any prompt whose current best probe score is below threshold T gets one more rollout (priority: lowest current best first); stop when budget exhausted. Final answer = best-by-probe among assigned rollouts per prompt.
+
+**Results (N=288 prompts with full 16 cached rollouts available):**
+
+| Avg rollouts / prompt | Uniform best-of-K | **Adaptive (T=0.95)** | Lift |
+|---|---|---|---|
+| 1 (no selection) | 0.719 | 0.719 | — |
+| 2 | 0.795 | **0.816** | +2.1 pp |
+| 4 | 0.806 | **0.830** | **+2.4 pp** |
+| 6 | 0.809 | **0.830** | +2.1 pp |
+| 8 | 0.809 | **0.830** | +2.1 pp |
+| 12 | 0.813 | **0.830** | +1.7 pp |
+| 16 (no budget constraint) | 0.823 | 0.830 | +0.7 pp |
+
+**Reading.** At constrained budgets (2–12 rollouts/prompt average), adaptive allocation gives **+1.7 to +2.4 pp** absolute accuracy lift over uniform allocation at the same total compute. The peak is at K_avg=4, where adaptive matches the full K=16 budget's accuracy with **1/4 the rollouts**.
+
+**How it works.** At K_avg=4 the adaptive strategy gives ≤3 rollouts to most prompts (the easy ones, where round 1 already crosses T=0.95) and pushes a subset of 43 hard prompts up to all 16 rollouts. This concentrates compute where it matters: easy prompts don't need re-sampling, hard prompts get a much bigger pool to find a correct rollout in. The probe identifies which prompts are "easy" vs "hard" after just one rollout, at near-oracle accuracy (cf. §18.5 — probe mean is r=0.97 with per-prompt accuracy).
+
+Figure: `extension/outputs/n500/figures/fig23_probe_adaptive_budget.png`.
+
+### 18.9 First-answer reward RLOO — the verifier-level cure for the rambling reward-hack
 
 The rambling pathology at 0.5B has a clean diagnosis (§3.1, §7): the verifier in `evaluation/countdown.compute_score` scores the *last* `<answer>` block, so RLOO rewards the policy for emitting many candidate blocks and only requires the *final* one to be correct. The probe-applied work in §17 / §18.1–§18.4 is one half of the picture (a deployment-time fix); the other half is to remove the perverse incentive at training time.
 
