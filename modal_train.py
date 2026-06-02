@@ -190,22 +190,6 @@ def run_rloo(trainer_args: list[str]) -> str:
     volumes={str(REMOTE_VOLUME_ROOT): TRAINING_VOLUME},
     secrets=_build_secret_list(),
 )
-def run_process_rloo(trainer_args: list[str]) -> str:
-    # Same RLOO trainer, but with the composite (outcome + subgoal) reward
-    # patched in by extension/training/process_rloo.py before rloo.py imports
-    # `compute_score`. The RLOO algorithm code in rloo_trainer/ is untouched.
-    return _run_training("extension/training/process_rloo.py", trainer_args)
-
-
-@app.function(
-    image=base_image,
-    gpu=GPU_CONFIG,
-    cpu=CPU_COUNT,
-    timeout=TIMEOUT_SECONDS,
-    startup_timeout=STARTUP_TIMEOUT_SECONDS,
-    volumes={str(REMOTE_VOLUME_ROOT): TRAINING_VOLUME},
-    secrets=_build_secret_list(),
-)
 def run_firstanswer_rloo(trainer_args: list[str]) -> str:
     # RLOO where the verifier scores the FIRST <answer> block instead of the
     # last. Text-based equivalent of probe-as-reward-shaping (the trace-final
@@ -369,7 +353,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "trainer",
         choices=(
-            "sft", "ipo", "rloo", "process_rloo", "eval",
+            "sft", "ipo", "rloo", "eval",
             "probe_cache", "elicit_confidence", "token_logprob_confidence",
             "sample_local", "cache_answers", "causal_steering",
             "probe_behavioral", "train_answer_probe",
@@ -402,8 +386,6 @@ def main(*raw_args: str) -> None:
         call = run_sft.spawn(trainer_args)
     elif args.trainer == "ipo":
         call = run_ipo.spawn(trainer_args)
-    elif args.trainer == "process_rloo":
-        call = run_process_rloo.spawn(trainer_args)
     elif args.trainer == "probe_cache":
         call = run_probe_cache.spawn(trainer_args)
     elif args.trainer == "elicit_confidence":
