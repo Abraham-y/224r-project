@@ -221,7 +221,10 @@ def _install_probe_reward(probe_pkl_path: str, hybrid: bool, layer: int) -> None
         think_close_char = full_text.find(_THINK_CLOSE_TOKEN, prompt_end_char)
         if think_close_char < 0:
             return 0.0
-        last_char_pos = think_close_char + len(_THINK_CLOSE_TOKEN) - 1
+        # MUST match cache_hidden_states.py: use char_to_token_index(offsets, think_close_char),
+        # which finds the token containing the FIRST char '<' of "</think>" (first subtoken),
+        # NOT the last char '>' (last subtoken). Earlier bug: was using last-char which is 2-3
+        # tokens later -- different hidden state, OOD probe -> saturation.
         try:
             enc = state["tokenizer"](
                 full_text,
@@ -232,10 +235,9 @@ def _install_probe_reward(probe_pkl_path: str, hybrid: bool, layer: int) -> None
             )
             input_ids = enc["input_ids"].to(state["device"])
             offsets = enc["offset_mapping"][0].tolist()
-            # Locate the token whose offset covers the LAST char of "</think>"
             think_close_tok = None
             for j, (s, e) in enumerate(offsets):
-                if s <= last_char_pos < e:
+                if s <= think_close_char < e:
                     think_close_tok = j
                     break
             if think_close_tok is None:
