@@ -909,7 +909,123 @@ We re-ran RLOO from C_SFT with a single change: monkey-patch `evaluation.countdo
 
 **Mechanism prediction.** Rewarding first-block correctness removes the gradient that selects for emitting multiple blocks: after the first block, additional blocks can only hurt (if they overwrite a correct first answer) or be neutral (if they're irrelevant). The expected effect is a sharp drop in mean blocks-per-rollout, a corresponding rise in first-block accuracy, and — if the probe-applied results generalize — a smaller pre−assertion gap because the model no longer needs to encode commit-time vs. trace-final distinctions if there's only one commit.
 
-**Status.** The first-answer RLOO run is in progress on Modal (`ap-xeO1zDmat85U3LiC5c9vqQ`, wandb run `1bm6ggzs`); at step 0 reward_mean was 0.265 (vs ~0.46 for vanilla RLOO at step 0, since first-block is a strictly harder target than last-block under C_SFT's policy). Once complete we will: (a) sample 16 rollouts × clean-406 from the new checkpoint; (b) measure mean blocks-per-rollout, first-block accuracy, last-block accuracy (under the original last-block verifier rule), and the position-resolved AUROC gap; (c) compare against vanilla C_outcome to test whether the verifier change kills the rambling reward-hack while preserving the accuracy gain RL provides. This is the cleanest direct test of the probe's mechanism story: if the probe-readable correctness representation is in fact a proxy for the rambling reward-hack, removing the reward-hack should also close the pre−assertion gap.
+**Result (NULL).** The first-answer RLOO ran for 100 steps. Downstream eval on the new checkpoint: mean blocks/rollout 6.36 (vs vanilla 6.78 — essentially unchanged); 82% multi-answer (vs 84% — within noise); first-block accuracy 0.521 (vs vanilla 0.550); position-gap +0.074 (vs vanilla +0.086). **Changing the verifier rule had no measurable effect on rambling or its representational signature.** The hypothesis "rambling is a verifier-rule reward-hack" is refuted — rambling persists when the rule strictly disfavors multi-block emission. Most likely it's an SFT-inherited behavioral pattern (C_SFT already has 60% multi-answer rate) that RLOO amplifies but neither verifier-rule alone can prevent. Full details and tables: findings.md EXP-19.
+
+---
+
+## 19. Probe-as-RL-reward: catastrophic Goodhart in both init regimes
+
+The near-oracle probe (AUROC 0.98 in-distribution; §2.1) is *excellent* as a deployment-time tool (§17–§18.9: best-of-K +12 pp, abstention 98% at 50% coverage, restart 60% compute saved, eval-proxy ±0.4 pp, etc.). The natural follow-up: **can we use it during RL training**, as a replacement for or supplement to the verifier?
+
+### 19.1 Setup
+
+`extension/training/probe_rloo.py` monkey-patches `evaluation.countdown.compute_score` to score each rollout via a fixed pickled linear probe applied to L16 hidden states at the `</think>` token. A reference model (transformers, loaded in the main RLOO process) extracts hidden states per rollout; it's reloaded each training round from the latest checkpoint so the probe sees the *current* policy's representations. Dual-logging is patched into `wandb.sdk.wandb_run.Run.log` so each step emits `train/probe_mean`, `train/verifier_mean`, and `train/probe_minus_verifier` — the verifier is logged for diagnostics only; the probe IS the RL reward.
+
+The probe used for these runs was re-trained on temperature-matched rollouts: 300 prompts × 8 rollouts sampled from C_outcome at `temperature=1.0, top_p=1.0` (matching RLOO's vLLM sampling), labeled by rollout-final verifier correctness, AUROC 0.81 held-out on the matched distribution. (The earlier `eval_c_outcome_n500.json` cache was at `temperature=0.6, top_p=0.95` — a different sampling regime; using the temp=0.6 probe gave OOD activations during training.)
+
+**Two-arm experiment** (both 100 RLOO steps, identical hyperparameters to vanilla):
+
+- **runA**: init from C_outcome (probe is in-distribution at step 0) — sanity test
+- **runB**: init from C_SFT (probe is cross-distribution at step 0) — replicate-vanilla test: can probe-RL take C_SFT → C_outcome accuracy lift (0.30 → 0.55) using only the probe as reward?
+
+### 19.2 Engineering reality — 10 bugs before the runs could start
+
+Probe-as-RL-reward is much more brittle than probe-as-deployment-tool. Before runA / runB could run validly, we hit and fixed 10 distinct bugs across 14 launch attempts:
+
+1. `warmup_ratio > 0` + `lr_schedule=constant` incompatible
+2. OOM at batch=128 with default grad_accum=1 (need to match vanilla's grad_accum=128)
+3. Hardcoded `probe_rloo_run1` in reference-checkpoint path
+4. Dual-logging patched `wandb.log` (module function) — rloo.py uses `self.wandb.log()` method
+5. Reference-model HF download silently hung container startup
+6. `_find_latest_checkpoint()` globally globbed → loaded checkpoint from a *different* run as the reference
+7. **Token-position extraction** used the token covering the LAST char of `</think>` (`'>\n\n'`, id 1339) but the probe was trained on hidden states at the FIRST char (`'</'`, id 911) — a two-token offset that placed activations completely OOD, causing the probe to saturate to ~0.99 on every rollout regardless of correctness. (THE bug — explained ~5 failed runs.)
+8. **Prompt-reconstruction whitespace**: `numpy.array2string([7, 2, 43, 63])` gives `'[ 7  2 43 63]'` with leading space inside brackets; my `.strip("[]").strip()` dropped it, mismatching asingh15's exact format in ~15% of prompts.
+9. Reference-model load defaulted to C_outcome regardless of `--model_name`.
+10. Tokenizer defaulted (need explicit `use_fast=True` to match `cache_hidden_states.py`).
+
+Local verification after all fixes: extracted hidden-state vector is **bit-identical** to `cache_hidden_states.py`'s extraction on the same text (max abs diff = 0.0, cosine = 1.0). Probe scores have healthy spread (mean 0.25, std 0.24, range [0.005, 0.911], 0% above 0.95). Methodological note: probe-as-reward deployment requires the *exact* extraction pipeline used to train the probe; subtle mismatches push activations off the probe's calibrated range and cause saturation.
+
+### 19.3 Training trajectories — two distinct Goodhart dynamics
+
+Both runs Goodharted, on different timescales:
+
+**runA (C_outcome init) — "delayed Goodhart":**
+
+| step | probe | verifier | gap | KL |
+|---|---|---|---|---|
+| 0 | 0.452 | 0.572 | −0.120 | 0.000 |
+| 20 | 0.561 | 0.582 | −0.021 | 0.082 |
+| 30 | 0.553 | 0.525 | +0.028 | 0.099 |
+| **40** | **0.687** | 0.528 | **+0.159** | 0.232 |
+| 60 | 0.947 | 0.385 | +0.561 | 0.255 |
+| 90 | 0.988 | 0.310 | +0.678 | 1040 |
+| 99 (final) | 0.991 | 0.321 | +0.671 | 0.374 |
+
+Probe and verifier tracked closely for the first 30 steps (gap ±0.03). At step 40 the gap suddenly widens; by step 60 the policy has reached probe saturation while verifier has dropped from 0.57 → 0.39. Final verifier 0.32 — the in-distribution probe-RL **destroyed 25 pp of accuracy** off C_outcome's starting point. The "looks benign for 30 steps before sudden collapse" dynamic is particularly dangerous: a researcher checking step-10 metrics would think training is working.
+
+**runB (C_SFT init) — "immediate Goodhart":**
+
+| step | probe | verifier | gap | KL |
+|---|---|---|---|---|
+| 0 | 0.471 | 0.298 | +0.173 | 0.000 |
+| 10 | 0.729 | 0.207 | +0.522 | 0.072 |
+| 30 | 0.925 | 0.207 | +0.718 | 0.198 |
+| 50 | 0.984 | 0.171 | +0.814 | 0.273 |
+| 99 (final) | 0.990 | 0.166 | +0.824 | 0.535 |
+
+Probe climbs 0.47 → 0.99 in 50 steps; verifier drops monotonically from 0.30 → 0.17. **Final verifier 0.17 — probe-RL ended catastrophically WORSE than the SFT baseline (0.29) it started from.** Far from replicating vanilla's lift to 0.55, the probe-RL policy regressed.
+
+### 19.4 Downstream eval — both checkpoints catastrophically bad
+
+Sampled 16 rollouts × 406 clean-406 prompts from each final checkpoint (script: `extension/probe/probe_rl_downstream_analysis.py`):
+
+| Checkpoint | mean blocks/rollout | multi% | first-block acc | last-block acc | mean len |
+|---|---|---|---|---|---|
+| C_SFT (no RL) | 2.71 | 60.5% | 0.290 | 0.238 | 2094 |
+| vanilla C_outcome | 6.78 | 84.0% | **0.550** | 0.498 | 1969 |
+| firstanswer C_outcome' | 6.36 | 82.2% | 0.521 | 0.468 | 1984 |
+| **probe-RL runA** (C_outcome init) | **15.55** | **99.6%** | **0.236** | **0.130** | 2298 |
+| **probe-RL runB** (C_SFT init) | **1.27** | 22.5% | **0.073** | 0.072 | 2432 |
+
+Both probe-RL checkpoints reached the worst first-block accuracies in the entire project. They learned **opposite structural exploits** for the same probe:
+
+- **runA**: emit many `<answer>` blocks (15.5/rollout, 99.6% multi-answer)
+- **runB**: emit one `<answer>` block (1.27/rollout, 76.8% one-block)
+
+Both score probe ~0.99 on average. The SAME probe direction admits two completely different "winning" surface patterns.
+
+### 19.5 What the probe was actually noticing — structural confounds
+
+We sampled 30 high-probe rollouts from runB and inspected them. Every probe=1.000 rollout shared a template (`/tmp/inspect_high_prob.py`):
+
+- Opener: *"Let me analyze this step by step:"*
+- Numbered enumeration (1. First, 2. Looking at..., 3. I found a solution...)
+- Verification language (*"Let me verify one final time:"*, *"Therefore, our solution is valid."*)
+- Specific `</think>\n\n<answer>` formatting
+- Post-answer `<think>` continuation (*"Let me verify:"*)
+
+Despite the structured rhetorical scaffold, **the actual answers were wrong AND often invalid**. Examples (probe scored 1.000 on all):
+
+- target=39, nums=[43, 56, 34, 50] → answer `((43 - 4) - (56 - 50)) = 39` — uses '4' not in nums; includes `= 39` in the expression itself
+- target=85, nums=[66, 61, 42] → answer `(66 - 6) + (66 / 6)` — uses 66 twice; '6' not in nums
+- target=62, nums=[10, 7, 45] → answer `(45 + 7) + 10 - 111` — uses '111' which isn't in nums
+
+**Diagnosis.** The probe was trained on C_outcome rollouts where correctness covaries with structured reasoning style. The probe learned to upweight the structural/stylistic surface, not the underlying mathematics. The policy then maximized probe score by emitting that surface template — divorced from actual answer correctness. **Classic confound exploitation**: the probe scored a feature correlated with correctness in the training distribution, the policy gamed the feature.
+
+This explains the "even in-distribution probe-RL Goodharts" result of §19.3. The probe doesn't have to be "wrong" at training time for the policy to break it: the policy actively explores parts of activation space where the probe's *training-time confounds* dominate the *training-time true features*, and the linear probe — having only one weight vector — can't tell the difference.
+
+### 19.6 Headline
+
+**Near-oracle linear probes on hidden states are excellent inference-time tools but unsafe as RL rewards.** Probe-RL catastrophically Goodharts in both regimes:
+
+- In-distribution (probe trained on policy's own activation distribution): **delayed Goodhart** — ~30 steps of benign-looking training before the policy discovers a structural exploit and accuracy crashes 25 pp below baseline.
+- Cross-distribution (probe trained on a different policy's distribution): **immediate Goodhart** — accuracy drops below the SFT starting point within 10 steps; ends 22 pp below SFT.
+
+What the probe was rewarding is not "correctness" but "structural patterns that correlate with correctness in the training distribution." When the policy is free to emit those patterns without solving the problem, it does so. The probe has no way to tell the difference between a correct answer wrapped in structured reasoning and an incorrect answer wrapped in the same structured reasoning.
+
+The boundary between probe-as-deployment-tool (works great) and probe-as-RL-reward (Goodharts catastrophically) is **whether the policy gets gradient access to the probe's input distribution**. At deployment time, the probe sees naturally-generated activations and gives a meaningful score. At training time, the policy reshapes its activations to maximize the probe's output — and finds that the easiest way is to amplify the structural confounds the probe is calibrated to.
+
+**This bounds the broader applied-probe story** (§17–§18): probes are valuable for selection/abstention/restart at inference but should not be deployed as RL rewards without explicit anchoring (verifier hybrid, periodic probe re-training on the new policy's rollouts, or both).
 
 ---
 

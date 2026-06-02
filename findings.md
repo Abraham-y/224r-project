@@ -693,28 +693,94 @@ What probably IS going on: rambling is an SFT-inherited behavior pattern (C_SFT 
 
 ---
 
-### EXP-21: Probe-RL B (linear probe as RLOO reward) — engineering & methodology notes
+### EXP-21: Probe-RL B (linear probe as RLOO reward) — catastrophic Goodhart in both init regimes ✅
 
-Status: in progress. Several runs (1–8) failed during launch due to a chain of engineering issues. The bugs are themselves a methodological contribution about deploying linear probes as RL rewards; documented here.
+**Question.** Can a near-oracle linear probe (AUROC 0.81–0.98 at trace-final on its training distribution) be deployed as an RL reward signal? If yes, does training-with-probe replicate vanilla RLOO's accuracy lift (C_SFT 0.30 → C_outcome 0.55)? If the policy games the probe, what shape does the gaming take and can we measure the representational signature?
 
-**Setup.** `extension/training/probe_rloo.py`: monkey-patch `evaluation.countdown.compute_score` to score rollouts via a fixed pickled linear probe applied to L16 hidden states at the `</think>` token. The reference model from which hidden states are extracted is reloaded each round from the latest checkpoint, so the probe sees the CURRENT policy's representation. Two probe variants pickled:
-- `probe_pipeline_C_outcome_l16_pre_answer.pkl` — corrected/first-block labels (AUROC 0.982)
-- `probe_pipeline_C_outcome_l16_pre_answer_lastblock.pkl` — rollout-final labels (AUROC 0.896, matches vanilla RLOO's reward target)
+**Setup.** `extension/training/probe_rloo.py` monkey-patches `evaluation.countdown.compute_score` to score rollouts via a fixed pickled linear probe applied to L16 hidden states at the `</think>` token. Reference model is reloaded each RL round from the latest checkpoint so the probe sees the CURRENT policy's representation. Dual-logging adds `train/probe_mean`, `train/verifier_mean`, `train/probe_minus_verifier` to wandb (verifier is logged for diagnostics; only probe enters the RL reward).
 
-**Dual logging.** `train/probe_mean`, `train/verifier_mean`, `train/probe_minus_verifier` injected into wandb at every RL step. The `probe_minus_verifier` trajectory is the Goodhart diagnostic: widening = policy gaming the probe.
+**Two-arm experiment** (both 100 RLOO steps, identical hyperparameters to vanilla C_outcome / firstanswer):
+- **runA**: init from C_outcome, probe trained on C_outcome temp=1.0 rollouts (AUROC 0.81) — "fully in-distribution" sanity test
+- **runB**: init from C_SFT, same probe — "cross-distribution / can probe-RL replicate vanilla's SFT→C_outcome lift" science test
 
-**Engineering issues found (each fixed):**
+**Engineering bugs found and fixed before runs were valid** (10 distinct bugs; runs 1–14 failed before runA/runB):
 
-1. **`warmup_ratio>0` + `lr_schedule=constant` incompatible** (run1) — rloo.py's default warmup_ratio is 0.05 but constant schedule rejects warmup. Fix: `--warmup_ratio 0`.
-2. **OOM at batch=128 with gradient_accumulation_steps=1** (run2) — rloo.py default grad_accum=1 means microbatch = full batch_size × group_size = 1024 rollouts, requiring ~316 GB for the cross-entropy logits tensor. Vanilla and firstanswer used grad_accum=128 (microbatch=8). Fix: `--gradient_accumulation_steps 128`.
-3. **Hardcoded `run1` path in reference-checkpoint loader** (silent on run4) — the `_ensure_reference_model` function had a hardcoded `/vol/checkpoints/.../probe_rloo_run1/latest_checkpoint/model` path, preventing the reference from ever reloading on other run names. Fix: glob across all `probe_rloo_*` run dirs.
-4. **Dual-logging patched `wandb.log` (module function) instead of `Run.log` (the method rloo.py actually calls)** — bug #2. Fix: patch `wandb.sdk.wandb_run.Run.log`.
-5. **Probe saturation to ~0.99 on every rollout** (run4, run6) — root cause: live forward pass extracted the hidden state at token id 29 (`'>'` alone) instead of token id 1339 (`'>\n\n'` — the merged closing-bracket + trailing newlines that `cache_hidden_states.py` extracted during probe training). Different tokens, different hidden state distributions, OOD probe → linear logistic regression saturates to ~1.0 for all inputs. Fix: tokenize prompt + FULL response with `return_offsets_mapping=True`, then locate the token covering the LAST CHARACTER of `</think>` — mirroring `cache_hidden_states.py` exactly. Verified locally on 14/14 sample rollouts.
-6. **Reference model hardcoded to C_outcome regardless of policy init** — fix: read `--model_name` from argv so reference matches policy at step 0 (important for C_SFT-init runs).
+1. `warmup_ratio>0` + `lr_schedule=constant` incompatible (need `--warmup_ratio 0`).
+2. OOM at batch=128 with default `gradient_accumulation_steps=1` (need 128 to keep microbatch=8 like vanilla).
+3. Hardcoded `probe_rloo_run1` in reference-checkpoint path (need to read from `--save_dir/--wandb_project/--wandb_name`).
+4. Dual-logging patched `wandb.log` (module function) but rloo.py uses `self.wandb.log()` (need to patch `wandb.sdk.wandb_run.Run.log`).
+5. Reference-model load blocked startup on HF download (made lazy).
+6. `_find_latest_checkpoint()` globbed across ALL probe-rloo runs → picked up leftover checkpoints from prior runs, loading the WRONG reference model. Fixed by scoping glob to current run's `wandb_name` directory.
+7. **Token-position bug (the load-bearing one)**: my extraction used the token covering the LAST char of `</think>` (e.g., `'>\n\n'`, id 1339), but `cache_hidden_states.py` uses the FIRST char (e.g., `'</'`, id 911). Two-token offset → completely different hidden state → linear LogReg saturates to ~0.99 for all inputs. Verified bit-identical extraction after fix.
+8. **Prompt-reconstruction bug**: `numpy.array2string` produces `'[ 7  2 43 63]'` (leading space inside brackets) when smaller numbers need padding. My `.strip("[]").strip()` dropped the leading space, mismatching asingh15's format in ~15% of prompts.
+9. Reference-model load defaulted to C_outcome regardless of `--model_name` (need to parse argv).
+10. Tokenizer defaulted (need explicit `use_fast=True` to match `cache_hidden_states.py`).
 
-**Methodological takeaway.** Deploying a pickled linear probe as an online RL reward is much more brittle than the (offline) "best-of-K probe selector" use case (§17, §18). The probe is calibrated on a specific (prompt, response) tokenization, position extraction, and forward-pass code path. Any small mismatch (different token at the `</think>` position; missing prompt context; etc.) shifts the activation distribution off the probe's calibrated range and causes saturation. For probe-as-reward to work robustly, the live extraction code must mirror the cached extraction byte-for-byte — and that's not trivial.
+Local end-to-end verification after all fixes: hidden-state vectors from `probe_rloo.py` are bit-identical to `cache_hidden_states.py` (max abs diff = 0.0, cosine = 1.0). Probe scores have healthy distribution (mean 0.25, std 0.24, range [0.005, 0.911], 0% saturated above 0.95).
 
-**run9 (active): C_SFT init + last-block probe + all 6 fixes.** Pending step-0 verification at the time of writing. Hypothesis test: can RLOO training a probe replicate vanilla's SFT→C_outcome accuracy lift (0.30 → 0.55), or does the policy game the probe (probe_mean rises while verifier_mean stays flat)?
+**Training trajectories** (clean of bugs, every 10 steps):
+
+| Step | **runA** probe | runA verifier | runA gap | runA KL | **runB** probe | runB verifier | runB gap | runB KL |
+|---|---|---|---|---|---|---|---|---|
+| 0 | 0.452 | 0.572 | −0.120 | 0.000 | 0.471 | 0.298 | +0.173 | 0.000 |
+| 10 | 0.447 | 0.490 | −0.042 | 0.071 | 0.729 | 0.207 | +0.522 | 0.072 |
+| 20 | 0.561 | 0.582 | −0.021 | 0.082 | 0.863 | 0.190 | +0.674 | 0.147 |
+| 30 | 0.553 | 0.525 | +0.028 | 0.099 | 0.925 | 0.207 | +0.718 | 0.198 |
+| **40** | **0.687** | **0.528** | **+0.159** | **0.232** | 0.957 | 0.215 | +0.741 | 0.277 |
+| 50 | 0.809 | 0.479 | +0.330 | 0.194 | 0.984 | 0.171 | +0.814 | 0.273 |
+| 60 | 0.947 | 0.385 | +0.561 | 0.255 | 0.990 | 0.203 | +0.786 | 0.294 |
+| 90 | 0.988 | 0.310 | +0.678 | **1040** | 0.993 | 0.170 | +0.823 | 0.319 |
+| 99 (final) | 0.991 | 0.321 | +0.671 | 0.374 | 0.990 | 0.166 | +0.824 | 0.535 |
+
+**Two distinct Goodhart dynamics:**
+
+- **runA (in-distribution): "delayed Goodhart"** — probe and verifier track closely for the first 30 steps (gap stays within ±0.03). At step 40 the gap suddenly widens; by step 60 the probe is saturated and the verifier has DROPPED from 0.57 → 0.39. By step 90 the policy completely diverges (KL=1040, a single-batch transient that resolves to KL≈0.37 by step 99 but indicates massive representation drift). End: verifier 0.32 (down 25 pp from start).
+- **runB (cross-distribution): "immediate Goodhart"** — probe rises 0.47→0.73 in just 10 steps; verifier drops from 0.30→0.21. Saturates probe→0.99 by step 50. End: verifier 0.17 (down 13 pp from start; CATASTROPHICALLY worse than C_SFT).
+
+**Downstream eval** (16 rollouts × 406 clean-406 prompts from each final checkpoint, script: `extension/probe/probe_rl_downstream_analysis.py`):
+
+| Checkpoint | mean blocks | multi% | first-block acc | last-block acc | mean len |
+|---|---|---|---|---|---|
+| C_SFT (no RL) | 2.71 | 60.5% | 0.290 | 0.238 | 2094 |
+| **vanilla C_outcome** | 6.78 | 84.0% | **0.550** | 0.498 | 1969 |
+| firstanswer C_outcome' | 6.36 | 82.2% | 0.521 | 0.468 | 1984 |
+| **probe-RL runA** (C_outcome init) | **15.55** | **99.6%** | **0.236** | **0.130** | 2298 |
+| **probe-RL runB** (C_SFT init) | **1.27** | 22.5% | **0.073** | 0.072 | 2432 |
+
+**Both probe-RL checkpoints are catastrophically worse than ANY other checkpoint in this project.** runA's first-block accuracy dropped 31 pp from C_outcome (0.55→0.24); runB's dropped 22 pp from C_SFT (0.29→0.07). Both reached the lowest accuracies on record while emitting rollouts the probe scored ~0.99 on.
+
+**Opposite structural exploits:**
+- runA learned to emit MANY `<answer>` blocks (15.5/rollout, 99.6% multi-answer) — extreme rambling
+- runB learned to emit ONE `<answer>` block (1.27/rollout, 76.8% one-block) — single-shot
+
+Both produce ~0.99 probe scores. The SAME probe direction can be activated by two completely different structural strategies, depending on init.
+
+**What the probe was actually noticing** (sampled 30 high-probe rollouts from runB with `extension/probe/probe_rl_downstream_analysis.py` + `/tmp/inspect_high_prob.py`):
+
+Every probe=1.000 rollout shared the same template:
+- "Let me analyze this step by step:" opener
+- Numbered enumeration ("1. First, let me look for... 2. Looking at the numbers... 3. I found a solution...")
+- Verification language ("Let me verify one final time:", "Therefore, our solution is valid.")
+- Specific `</think>\n\n<answer>` newline pattern
+- Post-answer `<think>` continuation ("Let me verify:")
+
+Despite the structured rhetorical scaffold, the actual answers were wrong AND often invalid: examples include `((43 - 4) - (56 - 50)) = 39` (uses '4' not in nums; includes `= 39` in expression; probe says 1.000) and `(66 - 6) + (66 / 6)` (uses 66 twice; '6' not in nums; probe says 1.000).
+
+**Diagnosis.** The probe was trained on C_outcome rollouts where correctness covaries with structured reasoning style. The probe direction picked up the structural/stylistic features, not the underlying mathematics. The policy then learned to maximize probe score by emitting that structural template — divorced from actual answer correctness. **Classic confound exploitation: the probe scored a surface feature correlated with correctness in training, the policy gamed the surface feature.**
+
+**Methodological takeaways:**
+1. Near-oracle linear probes (AUROC 0.98) on a task's natural rollout distribution are EXCELLENT as deployment-time tools (best-of-K, abstention, etc. — §17, §18). They are NOT safe to deploy as RL reward signals.
+2. Catastrophic Goodhart manifests in both regimes: "delayed-then-cliff" in-distribution (looks fine for ~30 steps before collapsing), "immediate" cross-distribution.
+3. The boundary "in-distribution probe-RL is safe" is FALSE. Even with the probe perfectly calibrated at step 0, the policy drifts the activation distribution enough by step 40 that the probe starts rewarding structural confounds.
+4. Engineering: probe-as-reward is brittle. Even small mismatches between cache-time and live-time extraction (off-by-2 token positions; whitespace in prompt reconstruction) saturate the probe before training can start.
+
+**Outputs.**
+- Training logs: wandb `rloo_probe_0.5b/runA_coutcome_FINAL` (`sefryqv5`-replaced), `runB_csft_FINAL`
+- Downstream rollouts: `eval_runA_postRL_n500.json`, `eval_runB_postRL_n500.json`
+- Analysis: `extension/outputs/n500/text/50_probe_rl_downstream.txt`
+- Scripts: `extension/training/probe_rloo.py`, `extension/probe/save_probe_pickle_temp1.py`, `extension/probe/save_probe_direction_temp1.py`, `extension/probe/probe_rl_downstream_analysis.py`, `extension/probe/verify_probe.py`
+
+**Modal cost.** ~$160 across two 100-step RLOO runs + ~$15 for downstream sampling + ~$10 causal steering (pending).
 
 ---
 
