@@ -780,7 +780,20 @@ Despite the structured rhetorical scaffold, the actual answers were wrong AND of
 - Analysis: `extension/outputs/n500/text/50_probe_rl_downstream.txt`
 - Scripts: `extension/training/probe_rloo.py`, `extension/probe/save_probe_pickle_temp1.py`, `extension/probe/save_probe_direction_temp1.py`, `extension/probe/probe_rl_downstream_analysis.py`, `extension/probe/verify_probe.py`
 
-**Modal cost.** ~$160 across two 100-step RLOO runs + ~$15 for downstream sampling + ~$10 causal steering (pending).
+**Causal steering on post-Goodhart checkpoint (runA).** Re-ran §2.11's experiment on runA's final checkpoint to test whether RL installed a causal write-pathway to the probe direction:
+
+| α | probe-acc | rand-acc | Δ (probe − rand) | vs original §2.11 null [−0.07, +0.02] |
+|---|---|---|---|---|
+| 0 (baseline) | 0.237 | — | — | (matches downstream first-block 0.236) |
+| 0.5 | 0.253 | 0.211 | +0.041 | slightly above null |
+| **1.0** | 0.253 | 0.170 | **+0.083** | **materially above null** |
+| 2.0 | 0.175 | 0.227 | −0.052 | within null |
+
+At α=1.0, probe direction now causally controls accuracy by +8.3 pp over random — outside the original null band. RL installed a mild causal write-pathway. But the effect is small (~8 pp on a 17-25% baseline) compared to the overall 25 pp accuracy drop — so the dominant gaming mechanism was the structural confounds documented above, not direct probe-direction installation.
+
+**Two complementary gaming mechanisms:** structural confound exploitation (dominant, surface template) + partial causal axis installation (small but measurable mech-interp signature).
+
+**Modal cost.** ~$160 across two 100-step RLOO runs + ~$15 downstream sampling + ~$10 causal steering = **~$185 total** for the probe-RL experiment.
 
 ---
 

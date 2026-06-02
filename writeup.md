@@ -1014,7 +1014,32 @@ Despite the structured rhetorical scaffold, **the actual answers were wrong AND 
 
 This explains the "even in-distribution probe-RL Goodharts" result of §19.3. The probe doesn't have to be "wrong" at training time for the policy to break it: the policy actively explores parts of activation space where the probe's *training-time confounds* dominate the *training-time true features*, and the linear probe — having only one weight vector — can't tell the difference.
 
-### 19.6 Headline
+### 19.6 Causal steering on the post-Goodhart checkpoint — probe direction became mildly causal
+
+The original §2.11 result on vanilla C_outcome was a clean null: perturbing the residual stream along the probe direction at the `</think>` token had accuracy effects indistinguishable from random-direction perturbation (Δ ∈ [−0.07, +0.02] across α). We re-ran the same experiment on runA's post-Goodhart checkpoint to test whether the policy learned to install a *causal write-pathway* to the probe direction during probe-RL training.
+
+**Setup.** Same `extension/probe/causal_steering.py` from §2.11: take 200 prefixes (prompt + response up to `</think>`), inject α · h_mean_norm · v_unit at the `</think>` token's L16 residual stream, continue generation, score the final `<answer>`. Compare probe direction vs random direction at matched magnitudes (α = 0.5, 1.0, 2.0). Conditions: 200 prefixes × {α=0 baseline, α=0.5/1.0/2.0 × {probe, random}}.
+
+**Result on runA's post-Goodhart checkpoint:**
+
+| α | probe-acc | rand-acc | Δ (probe − rand) | vs original §2.11 null [−0.07, +0.02] |
+|---|---|---|---|---|
+| 0 (baseline) | 0.237 | — | — | (matches downstream first-block acc 0.236) |
+| 0.5 | 0.253 | 0.211 | +0.041 | slightly above null |
+| **1.0** | **0.253** | **0.170** | **+0.083** | **materially above null** |
+| 2.0 | 0.175 | 0.227 | −0.052 | within null |
+
+**Reading.** At α=1.0, perturbing along the probe direction gives **+0.083 absolute accuracy** over a matched-magnitude random direction — clearly outside the original null band. The probe direction has become **mildly causally controllable** on the post-Goodhart policy. RL did install *some* write-pathway to the probe direction.
+
+**But the effect is modest.** Absolute magnitude is small (~8 pp on a 17–25% baseline) compared to the overall accuracy drop the policy exhibited (25 pp from C_outcome's 0.55). The probe direction is **one partial exploit, not the dominant gaming mechanism**. Most of the policy's Goodhart gain came from non-causal structural confounds (the surface rhetorical template documented in §19.5) — not from installing a clean causal write-pathway to the probe direction.
+
+**Two complementary mechanisms of probe-RL gaming:**
+1. **Structural confound exploitation** (dominant): the policy learned to emit the surface template ("Let me analyze step by step..." + numbered reasoning + verification language) that correlates with correctness in the probe's training data. This is the larger effect — visible in the +0.65 to +0.83 final probe-minus-verifier gap.
+2. **Causal axis installation** (small but measurable): RL slightly increased the controllability of the probe direction itself. The before/after Δ on probe-vs-random shifted from [−0.07, +0.02] to +0.08 at α=1.0 — a real but modest representational change.
+
+This is a clean mech-interp signature: the probe was previously a *correlational reader* of a multidimensional correctness subspace; under RL pressure, the policy partially converted it into a *causal control axis* in its own representation, while also exploiting more powerful surface-level confounds.
+
+### 19.7 Headline
 
 **Near-oracle linear probes on hidden states are excellent inference-time tools but unsafe as RL rewards.** Probe-RL catastrophically Goodharts in both regimes:
 
