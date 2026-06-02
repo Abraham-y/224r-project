@@ -111,10 +111,25 @@ def _install_probe_reward(probe_pkl_path: str, hybrid: bool, layer: int) -> None
     state = {"model": None, "tokenizer": None, "checkpoint_path": None, "device": "cuda" if torch.cuda.is_available() else "cpu"}
 
     def _find_latest_checkpoint():
-        """Find the most recently modified latest_checkpoint under any probe_rloo
-        run dir (auto-detects the current run rather than hardcoding the name)."""
+        """Find THIS RUN's latest_checkpoint (not any other run's leftover).
+        Parses --save_dir, --wandb_project, --wandb_name from argv and builds
+        the exact path. Returns None if no checkpoint yet for this run."""
         import glob
-        candidates = glob.glob("/vol/checkpoints/rloo_probe_checkpoints/*/*/latest_checkpoint/model")
+
+        def _arg(name, default=None):
+            for i, t in enumerate(sys.argv):
+                if t == f"--{name}" and i + 1 < len(sys.argv):
+                    return sys.argv[i + 1]
+            return default
+
+        save_dir = _arg("save_dir", "/vol/checkpoints/rloo_probe_checkpoints")
+        wandb_project = _arg("wandb_project", "rloo_probe_0.5b")
+        wandb_name = _arg("wandb_name")
+        if wandb_name is None:
+            # Fall back to global glob if we can't determine current run
+            candidates = glob.glob(f"{save_dir}/*/*/latest_checkpoint/model")
+        else:
+            candidates = glob.glob(f"{save_dir}/{wandb_project}/{wandb_name}/latest_checkpoint/model")
         if not candidates:
             return None
         return max(candidates, key=lambda p: os.path.getmtime(p))
