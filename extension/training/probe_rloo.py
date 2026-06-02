@@ -160,25 +160,58 @@ def _install_probe_reward(probe_pkl_path: str, hybrid: bool, layer: int) -> None
     except Exception as e:
         print(f"[probe_rloo] WARNING: could not load initial reference model from {init_path}: {e}", flush=True)
 
+    # Reconstruct the asingh15-style chat-template prompt from ground_truth so
+    # the probe sees hidden states with the SAME context it was trained on
+    # (prompt + response tokenized together). Without this, the probe receives
+    # OOD activations and saturates to ~0.98 for every rollout (we hit this
+    # in run4 — reward_mean = 0.98 at step 0).
+    _PROMPT_TEMPLATE = (
+        "<|im_start|>system\nYou are a helpful assistant.<|im_end|>\n"
+        "<|im_start|>user\nA conversation between User and Assistant. "
+        "The user asks a question, and the Assistant solves it. The assistant "
+        "first thinks about the reasoning process in the mind and then provides "
+        "the user with the answer.\nUser: Using the numbers [{nums}], create an "
+        "equation that equals {target}. You can use basic arithmetic operations "
+        "(+, -, *, /) and each number can only be used once. Show your work in "
+        "<think> </think> tags. And return the final answer in <answer> </answer> "
+        "tags, for example <answer> (1 + 2) / 3 </answer>.\nAssistant: Let me "
+        "solve this step by step.<|im_end|>\n<|im_start|>assistant\n"
+    )
+
+    def _reconstruct_prompt(ground_truth) -> str:
+        try:
+            import numpy as _np
+            nums_str = _np.array2string(_np.asarray(list(ground_truth["numbers"])),
+                                         separator=" ").strip("[]").strip()
+            return _PROMPT_TEMPLATE.format(nums=nums_str, target=ground_truth["target"])
+        except Exception:
+            return ""
+
     @torch.no_grad()
-    def _probe_score(solution_str: str) -> float:
+    def _probe_score(solution_str: str, ground_truth=None) -> float:
         """Return scalar probe probability in [0, 1] for the rollout's </think> position.
+
+        IMPORTANT: tokenizes prompt+response together (matching how the probe
+        was trained in cache_hidden_states.py), then locates </think> AFTER the
+        prompt. Without the prompt context, the probe receives OOD activations
+        and saturates.
 
         Returns 0.0 if </think> token not found, model not loaded, or any error.
         """
         if state["model"] is None or state["tokenizer"] is None:
             return 0.0
-        # Locate the first </think> in the response text.
         if _THINK_CLOSE_TOKEN not in solution_str:
             return 0.0
-        # Truncate to up to and including </think> (probe is for trace-final position).
+        # Build prompt + response prefix-up-to-</think>
         idx = solution_str.find(_THINK_CLOSE_TOKEN) + len(_THINK_CLOSE_TOKEN)
-        prefix = solution_str[:idx]
+        response_prefix = solution_str[:idx]
+        prompt_text = _reconstruct_prompt(ground_truth) if ground_truth is not None else ""
+        full_text = prompt_text + response_prefix
         try:
-            input_ids = state["tokenizer"](prefix, return_tensors="pt").input_ids.to(state["device"])
+            input_ids = state["tokenizer"](full_text, return_tensors="pt").input_ids.to(state["device"])
             if input_ids.shape[1] < 2: return 0.0
             out = state["model"](input_ids, output_hidden_states=True, use_cache=False)
-            # Last token corresponds to </think>'s final subtoken
+            # Last token corresponds to the final subtoken of the response's </think>
             h = out.hidden_states[layer][0, -1, :].float().cpu().numpy().reshape(1, -1)
             score = float(probe.predict_proba(h)[0, 1])
             return score
@@ -201,7 +234,7 @@ def _install_probe_reward(probe_pkl_path: str, hybrid: bool, layer: int) -> None
         verifier doesn't).
         """
         _ensure_reference_model()
-        probe_s = _probe_score(solution_str)
+        probe_s = _probe_score(solution_str, ground_truth)
         verifier_s = original_compute_score(solution_str, ground_truth, method, format_score, score)
         _TRACKER["probe"].append(probe_s)
         _TRACKER["verifier"].append(verifier_s)
@@ -214,13 +247,14 @@ def _install_probe_reward(probe_pkl_path: str, hybrid: bool, layer: int) -> None
     countdown.compute_score = probe_compute_score
     print("[probe_rloo] PROBE REWARD active: r = " + ("0.5*probe + 0.5*verifier" if hybrid else "probe (Variant A)"), flush=True)
 
-    # Patch wandb.log to inject train/probe_mean, train/verifier_mean, train/probe_minus_verifier.
-    # rloo.py logs `train/reward_mean` once per step; we attach our diagnostics to that call.
+    # Patch the Run.log method (rloo.py uses self.wandb.log() on the Run object,
+    # NOT the module-level wandb.log()) so our dual-logging actually fires.
     try:
         import wandb
-        _orig_log = wandb.log
+        from wandb.sdk.wandb_run import Run as _WandbRun
+        _orig_log = _WandbRun.log
 
-        def _patched_log(data, *args, **kwargs):
+        def _patched_log(self, data=None, *args, **kwargs):
             try:
                 if isinstance(data, dict) and "train/reward_mean" in data and _TRACKER["probe"]:
                     p = float(np.mean(_TRACKER["probe"]))
@@ -235,12 +269,12 @@ def _install_probe_reward(probe_pkl_path: str, hybrid: bool, layer: int) -> None
                     _TRACKER["verifier"].clear()
             except Exception as e:
                 print(f"[probe_rloo] dual-log patch warning: {e}", flush=True)
-            return _orig_log(data, *args, **kwargs)
+            return _orig_log(self, data, *args, **kwargs)
 
-        wandb.log = _patched_log
-        print("[probe_rloo] dual-logging active: probe_mean, verifier_mean, probe_minus_verifier", flush=True)
+        _WandbRun.log = _patched_log
+        print("[probe_rloo] dual-logging active: patched wandb.sdk.wandb_run.Run.log", flush=True)
     except Exception as e:
-        print(f"[probe_rloo] WARNING: could not patch wandb.log for dual logging: {e}", flush=True)
+        print(f"[probe_rloo] WARNING: could not patch Run.log for dual logging: {e}", flush=True)
 
 
 def main() -> None:
