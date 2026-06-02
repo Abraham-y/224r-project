@@ -177,12 +177,12 @@ def _install_probe_reward(probe_pkl_path: str, hybrid: bool, layer: int) -> None
     # (prompt + response tokenized together). Without this, the probe receives
     # OOD activations and saturates to ~0.98 for every rollout (we hit this
     # in run4 — reward_mean = 0.98 at step 0).
-    _PROMPT_TEMPLATE = (
+    _PROMPT_TEMPLATE_BARE = (
         "<|im_start|>system\nYou are a helpful assistant.<|im_end|>\n"
         "<|im_start|>user\nA conversation between User and Assistant. "
         "The user asks a question, and the Assistant solves it. The assistant "
         "first thinks about the reasoning process in the mind and then provides "
-        "the user with the answer.\nUser: Using the numbers [{nums}], create an "
+        "the user with the answer.\nUser: Using the numbers {nums_brackets}, create an "
         "equation that equals {target}. You can use basic arithmetic operations "
         "(+, -, *, /) and each number can only be used once. Show your work in "
         "<think> </think> tags. And return the final answer in <answer> </answer> "
@@ -193,9 +193,13 @@ def _install_probe_reward(probe_pkl_path: str, hybrid: bool, layer: int) -> None
     def _reconstruct_prompt(ground_truth) -> str:
         try:
             import numpy as _np
-            nums_str = _np.array2string(_np.asarray(list(ground_truth["numbers"])),
-                                         separator=" ").strip("[]").strip()
-            return _PROMPT_TEMPLATE.format(nums=nums_str, target=ground_truth["target"])
+            # Use numpy's bracket-included repr verbatim (preserves leading
+            # space inside brackets when smaller numbers need padding, e.g.,
+            # '[ 7  2 43 63]' for [7, 2, 43, 63]). Earlier .strip().strip()
+            # dropped the leading space, causing 15% of prompts to mismatch
+            # asingh15's actual format.
+            nums_with_brackets = _np.array2string(_np.asarray(list(ground_truth["numbers"])), separator=" ")
+            return _PROMPT_TEMPLATE_BARE.format(nums_brackets=nums_with_brackets, target=ground_truth["target"])
         except Exception:
             return ""
 
