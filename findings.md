@@ -90,7 +90,7 @@ Verified equal char-for-char on matched `(nums, target)` inputs. Length match to
 
 The n=50 results were superseded by the n=500 clean-406 dataset (EXP-02) and again by the corrected-label pipeline (EXP-14). The corrected numbers are in the headline section of this file and writeup §2.1; this entry retains only the timeline pointer.
 
-**Scripts.** `extension/probe/cache_hidden_states.py`, `extension/probe/analyze_probes.py`.
+**Scripts.** `extension/probe/cache_hidden_states.py` (the n=50 `analyze_probes.py` analysis was removed in the 64→30 script trim; superseded by the corrected-label `relabel_*` pipeline).
 
 ---
 
@@ -148,10 +148,9 @@ The n=50 results were superseded by the n=500 clean-406 dataset (EXP-02) and aga
 **Pearson r(mean_blocks, gap) across snapshots = +0.891 (p = 0.04).** Gap grows over training in lockstep with rambling rate.
 
 **Scripts.**
-- Modal rollouts at snapshots: `extension/evaluation/launch_expansion_rollouts.sh` (snapshot rollouts launched in same batch as Phase 1)
-- Cache: `extension/probe/launch_expansion_cache.sh`
-- Analysis: `extension/probe/per_snapshot_decoupling_gap.py` → `14_per_snapshot_decoupling_gap.txt` / `.csv`
-- Figure with CIs: `extension/probe/headline_dynamics_figure.py` → `fig13_headline_dynamics.png`
+- Modal rollouts at snapshots: `extension/evaluation/launch_expansion_rollouts.sh` (same batch as Phase 1)
+- Corrected-label per-snapshot dynamics: `extension/probe/relabel_dynamics.py`
+- (the original `launch_expansion_cache.sh`, `per_snapshot_decoupling_gap.py`, and `headline_dynamics_figure.py` were removed in the 64→30 script trim)
 
 **Caches.** `extension/cache/probe_cache_dynamics_optB/` (fresh-rollout caches per snapshot).
 
@@ -309,7 +308,7 @@ Conditions per prefix:
 - `extension/probe/save_probe_vector.py` (saves L16 pre_answer probe direction to `extension/cache/steering/`)
 - `extension/probe/causal_steering.py` (Modal job with HF + forward hook)
 - `extension/probe/analyze_causal_steering.py` → `23_causal_steering.txt`
-- `extension/probe/causal_steering_figure.py` → `fig12_causal_steering.png`
+- (the separate `causal_steering_figure.py` plotting helper was removed in the 64→30 script trim)
 
 **Bug history.** First attempt crashed at the hook (newer transformers returns Tensor not tuple from decoder layer). Fixed in commit `34a2e8c`. Second attempt's stdout buffered for ~50 min — killed (had 37/100 prefixes done); third attempt added `flush=True`; resumed on the missing 63 prefixes with a JSONL-based skip filter (`extension/data/steering_todo.jsonl`).
 
@@ -740,35 +739,45 @@ extension/evaluation/
   wait_and_launch_phase2.py            # Phase 1 → Phase 2 watchdog
 
 extension/probe/
-  cache_hidden_states.py               # default cache: pre_answer / assertion / neutral
-  cache_answer_positions.py            # <answer>-opening cache (Phase 2A)
-  filter_to_clean.py                   # n=500 → clean-406 filter
-  analyze_probes.py                    # per-cell AUROCs
-  bootstrap_headline_cis.py            # bootstrap 95% CIs on AUROCs
-  qualitative_matched_pairs.py         # §2.5 matched-pair table
-  cross_checkpoint_transfer.py         # 2×2 cross-checkpoint matrix
-  cross_position_transfer.py           # 3×3 cross-position matrix (single-seed)
-  phase1_diagnostics.py                # cross-position transfer (10-seed + heatmap)
-  per_snapshot_decoupling_gap.py       # Option B dynamics analysis
-  length_matched_transfer.py           # length-matched control
-  significance_and_baselines.py        # significance tests + LR/RF/MLP
-  deeper_analyses.py                   # per-keyword + per-layer + Cohen's d
-  per_layer_sweep.py                   # 25-layer probe sweep
-  probe_direction_cosines.py           # geometric cosine analysis
-  ft_rollout_trajectory.py             # EXP-06 F→T trajectory
-  save_probe_vector.py                 # saves probe direction for steering
-  causal_steering.py                   # Modal HF hook injection
-  analyze_causal_steering.py           # bar chart aggregation
-  phase2a_per_answer_correctness.py    # EXP-05 pre-flight
-  phase2a_pattern_analysis.py          # EXP-05 with trace-final probe
+  # caching
+  cache_hidden_states.py                # pre_answer / assertion / neutral cache
+  cache_answer_positions.py             # <answer>-opening cache (Phase 2A)
+  cache_all_think_close.py              # all </think> tokens cache
+  filter_to_clean.py                    # n=500 -> clean-406 filter
+  # corrected-label (next-<answer>-block) pipeline -- EXP-14 + downstream
+  relabel_full_grid.py                  # relabel every cached row by next-block correctness
+  relabel_redo_downstream.py            # corrected-label probe training + stats
+  relabel_cross_checkpoint.py           # cross-checkpoint transfer (corrected)
+  relabel_dynamics.py                   # Option B per-snapshot dynamics (corrected)
+  relabel_cosines.py                    # EXP-07 geometric cosines (corrected)
+  relabel_per_problem.py                # corrected per-problem correlation (supersedes EXP-10/11)
+  # position / mechanism analyses
+  cross_position_transfer.py            # 3x3 cross-position matrix (single-seed)
+  phase1_diagnostics.py                 # cross-position transfer (10-seed + heatmap)
+  per_layer_sweep.py                    # 25-layer probe sweep
+  position_resolved_auroc.py            # AUROC by token position in the trace
+  phase2a_per_answer_correctness.py     # EXP-05 pre-flight
+  phase2a_pattern_analysis.py           # EXP-05 with trace-final probe
   phase2a_position_appropriate_probe.py # EXP-05 with position-appropriate probe
-  train_answer_probe.py                # EXP-10 probe trainer (Modal)
-  probe_behavioral_correlation.py      # EXP-10 experiment (Modal)
-  probe_behavioral_pre_answer.py       # EXP-11 trace-final replication (local)
-  make_figures.py                      # standard figures 1–7
-  headline_dynamics_figure.py          # fig13 (headline plot)
-  causal_steering_figure.py            # fig12 (steering bar chart)
-  qualitative_annotated_figure.py      # qualitative example fig8
+  ft_rollout_trajectory.py              # EXP-06 F->T trajectory
+  probe_answer_commit.py                # first-vs-last answer / probe-as-selector
+  # applied / test-time uses (EXP-15..19e)
+  probe_guided_restart.py               # EXP-15 budgeted restart
+  probe_abstention_and_hybrid.py        # EXP-16/17 abstention + majority hybrid
+  probe_adaptive_budget.py              # EXP-19d adaptive test-time budget
+  probe_as_eval_proxy.py                # EXP-19e verifier-free eval proxy
+  probe_applied_scale_comparison.py     # EXP-18 0.5B vs 1.5B applied
+  probe_creative_extensions.py          # EXP-19a/b/c
+  probe_thinkclose_selector.py          # </think>-selector variant
+  # steering
+  save_probe_vector.py                  # saves probe direction for steering
+  causal_steering.py                    # EXP-09 Modal HF hook injection
+  analyze_causal_steering.py            # steering aggregation
+  # reward-hack cost
+  reward_hack_cost.py                   # EXP-20 first-vs-last accuracy + token waste
+
+# (33 superseded scripts were removed in the 64->30 trim; their results are
+#  retained in the EXP entries above and were recomputed via the relabel_* pipeline.)
 ```
 
 ### Caches (under `extension/cache/`, gitignored)
@@ -787,7 +796,7 @@ confidence/                             # verbalized-confidence JSONLs
 
 ### Text outputs (in `extension/outputs/n500/text/`, gitignored)
 
-See list at top of doc; 24 files numbered 01_*.txt through 24_*.txt + 1 CSV.
+Numbered `NN_*.txt` files (01–42, non-contiguous after the script trim) plus a few `.json`/`.csv`. The reward-hack-cost output is `35_reward_hack_cost.json`.
 
 ### Figures (in `extension/outputs/n500/figures/`, gitignored)
 
