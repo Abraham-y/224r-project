@@ -141,12 +141,17 @@ def _install_probe_reward(probe_pkl_path: str, hybrid: bool, layer: int) -> None
         state["tokenizer"] = AutoTokenizer.from_pretrained(model_path)
         state["loaded_mtime"] = 0.0  # forces reload from disk once latest_checkpoint appears
 
-    # Try to seed from the SFT model path env, otherwise we'll wait for first checkpoint.
-    sft_path = os.environ.get("PROBE_RLOO_INIT_MODEL", "asingh15/qwen-sft-countdown-defaultproj")
+    # Initial reference model: C_outcome (where the probe was trained).
+    # The probe sees its training distribution at step 0; as the policy
+    # updates each round, we reload from the latest_checkpoint.
+    init_path = os.environ.get(
+        "PROBE_RLOO_INIT_MODEL",
+        "/vol/checkpoints/rloo_checkpoints/rloo_training/rloo_fixed_v2/latest_checkpoint/model",
+    )
     try:
-        _init_reference_from(sft_path)
+        _init_reference_from(init_path)
     except Exception as e:
-        print(f"[probe_rloo] WARNING: could not load initial reference model: {e}", flush=True)
+        print(f"[probe_rloo] WARNING: could not load initial reference model from {init_path}: {e}", flush=True)
 
     @torch.no_grad()
     def _probe_score(solution_str: str) -> float:
