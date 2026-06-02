@@ -4,7 +4,7 @@
 
 > **Purpose.** `writeup.md` is the paper-ready synthesis (~750 lines, narrative). `extension/CHANGELOG.md` is the chronological work log. This file is the **dense lookup table**: per-experiment, what we asked, how we asked it, what the numbers were, which scripts produced them, where the raw outputs live, and what the conclusion was. It's deliberately less readable than the writeup and more complete than the changelog.
 >
-> **Date of last update.** 2026-06-01 (RLOO 1.5B mid-run; this doc updated as 1.5B results come in).
+> **Date of last update.** 2026-06-01 (corrected-label probe pipeline, applied-probe extensions, first-answer RLOO mid-run).
 > **Status legend.** ✅ done · ⏳ running · ⏸ paused / blocked · ❌ failed / abandoned · 🔜 queued.
 
 ---
@@ -569,6 +569,145 @@ The 1.5B SFT is on par with our 0.5B baseline. Adequate starting point for RLOO.
 - 100 RLOO steps at 1.5B is fewer per-parameter updates than at 0.5B.
 - n=105 valid problems for per-problem correlation (vs 218 at 0.5B); 1.5B C_outcome is too deterministic for many problems to have mixed outcomes in K=16.
 - We did NOT redo Option B dynamics or the cross-position transfer matrix at 1.5B. The scale claim above rests on the aggregate + matched-pair + per-problem evidence. A cleaner pre-paper extension would add those (~$15 Modal, half a day local).
+
+---
+
+### EXP-14: Corrected-label probe pipeline (next-`<answer>`-block as label) ✅
+
+**Question.** When training the probe on assertion/pre_answer rows from multi-answer C_outcome rollouts, what is the *correct* label? Original pipeline labeled each row by the rollout's overall verifier score (last-block correctness). But the probe at assertion-position-N is morally a prediction of the *immediately next `<answer>` block*, not the rollout-final one. With rambling at 87% and per-block correctness varying widely within a rollout, this is a confounding label choice.
+
+**Setup.** `extension/probe/relabel_full_grid.py` re-labels every assertion/pre_answer row by the correctness of the next `<answer>` block following that row's token. `extension/probe/relabel_redo_downstream.py` then retrains the probe via GroupKFold(5) under the corrected labels and recomputes the downstream statistics.
+
+**Results — every AUROC in §2.1 shifts upward (probe is much stronger than we'd realized):**
+
+| Cell | original-label AUROC | corrected-label AUROC | delta |
+|---|---|---|---|
+| C_outcome L16 pre_answer | 0.896 | **0.980** | +0.084 |
+| C_outcome L16 assertion | 0.703 | **0.852** | +0.149 |
+| C_outcome L16 gap | +0.193 | **+0.127** | −0.066 (gap narrows) |
+| C_SFT L16 pre_answer | 0.804 | **0.904** | +0.100 |
+| C_SFT L16 assertion | 0.785 | **0.887** | +0.102 |
+| C_SFT L16 gap | +0.019 | **+0.017** | ≈ unchanged |
+
+**Downstream stats — the matched-pair effect between checkpoints loses significance:**
+- Wilcoxon C_SFT (one-sided > 0): p = 9.3e-35 (unchanged direction; corrected magnitude)
+- Wilcoxon C_outcome (one-sided > 0): p = 3.9e-8
+- **Mann-Whitney between checkpoints (was the headline matched-pair difference): p = 0.68 (NOT significant under corrected labels)**
+
+**Interpretation.** With proper labels, the within-position probes are all very strong (0.85-0.98), and the cross-checkpoint matched-pair effect is no longer significant. The decoupling story is now (a) the pre-assertion gap, still real but smaller (+0.127), (b) the rambling-as-reward-hack pathology (87% multi-answer at 0.5B C_outcome), and (c) the applied near-oracle probe that we can deploy (EXP-15, 16, 17, 18). The "decoupling between checkpoints" framing is downgraded; the "applied near-oracle probe" framing is upgraded.
+
+**Scripts.** `extension/probe/relabel_full_grid.py`, `extension/probe/relabel_redo_downstream.py`.
+
+---
+
+### EXP-15: Probe-guided budgeted restart sampling ✅
+
+**Question.** Can we use the probe at `</think>` as an early-stopping criterion during best-of-K sampling — generate one rollout, accept if probe ≥ T, else re-sample — to match best-of-K accuracy at less compute?
+
+**Setup.** `extension/probe/probe_guided_restart.py`. Cached rollouts on 0.5B C_outcome clean-406. Held-out probe scores from GroupKFold(5) with corrected labels (AUROC 0.982). Sweep (B, T).
+
+**Results (truth = first-`<answer>` correctness; verifier-equivalent if model emits 1 block):**
+
+| Strategy | Accuracy | Avg rollouts used |
+|---|---|---|
+| pass@1 | 0.549 | 1.0 |
+| best-of-16 (by probe) | 0.670 | 16.0 |
+| **restart B=16, T=0.95** | **0.675** | **6.3** |
+| restart B=8, T=0.95 | 0.658 | 4.6 |
+| restart B=4, T=0.95 | 0.637 | 2.8 |
+
+Probe-restart matches/exceeds best-of-16 with **~60% compute savings**. The accuracy-vs-compute Pareto curve sits strictly above best-of-K at every budget.
+
+**Output.** `extension/outputs/n500/text/32_probe_guided_restart.txt`. Figure: `extension/outputs/n500/figures/fig18_probe_guided_restart.png`.
+
+---
+
+### EXP-16: Probe-guided selective abstention ✅
+
+**Question.** If we let the model abstain on uncertain prompts, how high does accuracy on attempted problems get as a function of coverage?
+
+**Setup.** `extension/probe/probe_abstention_and_hybrid.py` (part 1). For each prompt, score the first cached rollout's `</think>` activation with the held-out corrected-label probe; commit iff probe ≥ T; else abstain. Sweep T.
+
+**Results on 0.5B C_outcome clean-406, n=406:**
+
+| Coverage | Threshold T | n attempted | Accuracy on attempted |
+|---|---|---|---|
+| 100% | 0.00 | 406 | 0.549 |
+| ~70% | 0.02 | 263 | 0.837 |
+| ~55% | 0.30 | 228 | 0.943 |
+| **~50%** | **0.86** | **201** | **0.980** |
+| ~33% | 0.98 | 133 | 0.992 |
+
+Near-perfect accuracy at 33% coverage — strongest practical-mechanism use of the probe. Useful in any deployment where the system has the option to say "I don't know."
+
+**Output.** `extension/outputs/n500/text/33_probe_abstention_hybrid.txt`. Figure: `extension/outputs/n500/figures/fig19_probe_abstention.png`.
+
+---
+
+### EXP-17: Probe + majority-vote ensemble ✅
+
+**Question.** Is the probe complementary to self-consistency (majority vote over K rollouts), or just a noisier version of the same signal?
+
+**Setup.** `extension/probe/probe_abstention_and_hybrid.py` (part 2). For each prompt, compute (a) probe-best-of-16 (rollout with highest probe wins), (b) majority-of-16 (most frequent first-`<answer>` equation wins), (c) intersection rule (majority if its mean probe ≥ 0.5, else fall back to probe-best).
+
+**Results on 0.5B C_outcome clean-406, n=406:**
+
+| Strategy | Accuracy |
+|---|---|
+| probe-best-of-16 | 0.670 |
+| majority-of-16 | 0.618 |
+| **intersection (majority if mean_probe ≥ 0.5, else probe-best)** | **0.677** |
+| union (commit iff probe-best ≡ majority) | 0.618 |
+
+Agreement rate between probe-best and majority-best: 53.7%. **On the 188 disagreement prompts, probe-best wins 26 vs majority 5 (5.2× ratio).**
+
+The probe is **strictly complementary** to majority vote: when they disagree, the probe is right 5× more often. The intersection rule is the best single combination tested. This rules out the "probe is just self-consistency in disguise" alternative explanation.
+
+**Output.** `extension/outputs/n500/text/33_probe_abstention_hybrid.txt`. Figure: `extension/outputs/n500/figures/fig20_probe_majority_hybrid.png`.
+
+---
+
+### EXP-18: Cross-scale applied-probe comparison (0.5B vs 1.5B) ✅
+
+**Question.** Do the applied strategies (best-of-K, abstention, restart) generalize to 1.5B C_outcome, where the rambling reward-hack does not occur?
+
+**Setup.** `extension/probe/probe_applied_scale_comparison.py`. Train independent corrected-label probes on 0.5B and 1.5B cached `</think>` activations (different hidden dims; this is not weight-transfer, just same-strategy comparison). Run the same applied strategies at both scales.
+
+**Results.**
+
+| Metric | 0.5B C_outcome | 1.5B C_outcome |
+|---|---|---|
+| Held-out balanced AUROC at `</think>` | **0.982** | **0.974** |
+| pass@1 (first-block, cached subset) | 0.549 | 0.517 |
+| probe-best-of-16 | 0.670 (+12.1 pp) | 0.603 (+8.6 pp) |
+| abstain ~50% coverage | 0.980 | 0.931 |
+| abstain ~33% coverage | 0.993 | 0.956 |
+| probe-restart B=16, T=0.95 | 0.675 (used 6.3) | 0.601 (used 5.7) |
+
+**Reading.** Probe is near-oracle at both scales. Applied strategies generalize: abstention reaches >93% accuracy at 50% coverage even at 1.5B (where the rambling exploit is absent). The applied story is not "useful only because the model rambles" — it's "useful as a general internal verifier."
+
+Note: cached-rollout subset only includes prompts that produced a `</think>` token; these absolute first-block pass@1 numbers should not be compared to the n=50 last-block test pass@1.
+
+**Output.** `extension/outputs/n500/text/34_probe_applied_scale_comparison.txt`.
+
+---
+
+### EXP-19: First-answer reward RLOO (verifier-level remedy) ⏳
+
+**Question.** The rambling at 0.5B C_outcome is a reward-hack of the verifier's "last-`<answer>`-block wins" rule (§3.1, §7 in writeup). If we monkey-patch the verifier to score the FIRST `<answer>` block instead, does the rambling go away while accuracy is preserved? This is the verifier-level equivalent of probe-as-reward-shaping (the probe is a near-oracle predictor of first-block correctness, so the two reward signals are equivalent).
+
+**Setup.** `extension/training/firstanswer_rloo.py`: monkey-patch `evaluation.countdown.compute_score` to score the first `<answer>` block, then exec `rloo_trainer/rloo.py` unchanged. Same RLOO hyperparameters as vanilla C_outcome run. Modal app `ap-xeO1zDmat85U3LiC5c9vqQ`, wandb run `1bm6ggzs`.
+
+**Status.** Training in progress on Modal. At step 0, reward_mean = 0.265 (vs ~0.46 for vanilla RLOO at step 0 — first-block reward is a harder target for C_SFT). Expected completion ~2-3h from launch.
+
+**Planned downstream analysis** (when checkpoint completes):
+1. Sample 16 rollouts × clean-406 from the new C_outcome' checkpoint.
+2. Measure mean blocks-per-rollout (vs 7.6 for vanilla C_outcome; expect ≈1).
+3. Measure first-block, last-block accuracy.
+4. Cache hidden states at `</think>` + assertion + neutral; retrain probe; check whether pre−assertion gap shrinks under first-block training.
+5. Compare matched-pair statistics across new C_outcome' vs vanilla C_outcome.
+
+If the gap shrinks under first-answer training, it directly confirms the "rambling-as-mediator-of-decoupling" story.
 
 ---
 

@@ -206,6 +206,22 @@ def run_process_rloo(trainer_args: list[str]) -> str:
     volumes={str(REMOTE_VOLUME_ROOT): TRAINING_VOLUME},
     secrets=_build_secret_list(),
 )
+def run_firstanswer_rloo(trainer_args: list[str]) -> str:
+    # RLOO where the verifier scores the FIRST <answer> block instead of the
+    # last. Text-based equivalent of probe-as-reward-shaping (the trace-final
+    # probe predicts first-block correctness with AUROC 0.98).
+    return _run_training("extension/training/firstanswer_rloo.py", trainer_args)
+
+
+@app.function(
+    image=base_image,
+    gpu=GPU_CONFIG,
+    cpu=CPU_COUNT,
+    timeout=TIMEOUT_SECONDS,
+    startup_timeout=STARTUP_TIMEOUT_SECONDS,
+    volumes={str(REMOTE_VOLUME_ROOT): TRAINING_VOLUME},
+    secrets=_build_secret_list(),
+)
 def run_eval(eval_args: list[str]) -> str:
     return _run_eval(eval_args)
 
@@ -357,7 +373,7 @@ def _build_parser() -> argparse.ArgumentParser:
             "probe_cache", "elicit_confidence", "token_logprob_confidence",
             "sample_local", "cache_answers", "causal_steering",
             "probe_behavioral", "train_answer_probe",
-            "cache_all_thinkclose",
+            "cache_all_thinkclose", "firstanswer_rloo",
         ),
     )
     parser.add_argument(
@@ -406,6 +422,8 @@ def main(*raw_args: str) -> None:
         call = run_train_answer_probe.spawn(trainer_args)
     elif args.trainer == "cache_all_thinkclose":
         call = run_cache_all_thinkclose.spawn(trainer_args)
+    elif args.trainer == "firstanswer_rloo":
+        call = run_firstanswer_rloo.spawn(trainer_args)
     else:
         call = run_rloo.spawn(trainer_args)
 

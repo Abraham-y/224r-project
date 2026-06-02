@@ -921,3 +921,81 @@ Figure: `extension/outputs/n500/figures/fig15_probe_commit_variants.png` (sweep 
 
 ---
 
+## 18. Probe applied: extended results (restart, abstention, hybrid, cross-scale, first-answer reward)
+
+Section §17 showed that the corrected-label `</think>` probe (held-out balanced AUROC = 0.982 on 0.5B C_outcome clean-406 — see §2.1 with corrected labels) supports a within-rollout commit-selector with +8.7 pp gain. We extend that result along five complementary directions: across-rollout selection, selective abstention, ensemble with self-consistency, cross-scale generalization to 1.5B, and feeding the same idea back into RL as a verifier-level fix.
+
+### 18.1 Probe-guided budgeted restart sampling (across-rollout selection)
+
+`probe-best-of-K` is an upper-bound oracle for a setting where you commit to generating all K rollouts. In deployment, you can be smarter: generate one rollout, score it with the probe; if probe ≥ T, commit and stop; else re-sample, up to budget B. Saves compute in expectation.
+
+Sweep over (B, T) on the cached 0.5B C_outcome clean-406 rollouts using the corrected-label `</think>` probe scores (script: `extension/probe/probe_guided_restart.py`):
+
+| Strategy | Accuracy | Avg rollouts used |
+|---|---|---|
+| pass@1 (just take rollout 0) | 0.549 | 1.0 |
+| best-of-K, K=2 | 0.589 | 2.0 |
+| best-of-K, K=4 | 0.626 | 4.0 |
+| best-of-K, K=8 | 0.658 | 8.0 |
+| best-of-K, K=16 | 0.670 | 16.0 |
+| **probe-restart B=16, T=0.95** | **0.675** | **6.3** |
+| probe-restart B=8, T=0.95 | 0.658 | 4.6 |
+| probe-restart B=4, T=0.95 | 0.637 | 2.8 |
+| probe-restart B=2, T=0.95 | 0.580 | 1.7 |
+
+**Reading.** Probe-restart at (B=16, T=0.95) matches and slightly exceeds best-of-16 accuracy (+0.005) while using only 6.3 rollouts per prompt on average — **~60% compute savings** at no accuracy cost. At B=8, T=0.95, accuracy 0.658 matches best-of-8 with only 4.6 rollouts used. The accuracy-vs-compute Pareto front sits *above* the best-of-K curve at every B. Figure: `extension/outputs/n500/figures/fig18_probe_guided_restart.png`.
+
+### 18.2 Probe-guided selective abstention
+
+When the probe says "I'm not confident," the optimal action is to *not* commit, not commit-and-be-wrong. We score each prompt's first rollout at `</think>` and commit only if probe ≥ T (script: `extension/probe/probe_abstention_and_hybrid.py`).
+
+| Coverage target | Threshold T | n attempted | Accuracy on attempted |
+|---|---|---|---|
+| 100% (no abstention) | 0.00 | 406 | 0.549 |
+| ~70% | 0.02 | 263 | 0.837 |
+| ~55% | 0.30 | 228 | 0.943 |
+| **~50%** | **0.86** | **201** | **0.980** |
+| ~33% | 0.98 | 133 | 0.992 |
+
+**Reading.** At coverage 50% (commit on the half of problems where the probe is most confident in the first rollout), accuracy on attempted problems is **0.980**. At 33% coverage it is **0.992**. The base no-abstention accuracy is 0.549. This is a strong selective-prediction curve: a deployed system with the option to abstain can be near-perfect on the half of problems where the model is internally confident, even though the unconditional accuracy is around chance. Figure: `extension/outputs/n500/figures/fig19_probe_abstention.png`.
+
+### 18.3 Probe + majority-vote ensemble
+
+Self-consistency (majority vote over K rollouts) is a strong baseline. We test whether the probe is complementary to it:
+
+| Strategy | Accuracy |
+|---|---|
+| probe-best-of-16 (by probe argmax) | 0.670 |
+| majority-of-16 (by first-block equation frequency) | 0.618 |
+| **intersection (majority if mean_probe ≥ 0.5, else probe-best)** | **0.677** |
+| union (commit iff probe-best ≡ majority) | 0.618 |
+
+Agreement rate between probe-best and majority-best: **53.7%** (218/406 prompts pick the same equation). On the 188 disagreement prompts, **probe-best wins 26 times, majority wins 5 times** (5.2× ratio), 64 both-correct, 93 both-wrong. The probe is **strictly complementary** to majority vote: when the two methods disagree, the probe is right far more often. A trivial intersection rule (majority if probe agrees enough, else probe-best) gives the highest accuracy in the table (0.677). Figure: `extension/outputs/n500/figures/fig20_probe_majority_hybrid.png`.
+
+### 18.4 Cross-scale probe applied: 1.5B has near-oracle probe too
+
+We repeated the §18.1–§18.3 pipeline at 1.5B C_outcome (independent probe trained on 1.5B hidden states; hidden dims differ, so this is **not** a weight-transfer test — it's a "does the same strategy work at the next scale" test). Script: `extension/probe/probe_applied_scale_comparison.py`.
+
+| Metric | 0.5B C_outcome | 1.5B C_outcome |
+|---|---|---|
+| Held-out balanced AUROC at `</think>` (corrected labels) | **0.982** | **0.974** |
+| pass@1 (first-block correctness, cached rollouts) | 0.549 | 0.517 |
+| probe-best-of-16 | 0.670 (+12.1 pp) | 0.603 (+8.6 pp) |
+| abstain at ~50% coverage | 0.980 | 0.931 |
+| abstain at ~33% coverage | 0.993 | 0.956 |
+| probe-restart B=16, T=0.95 | 0.675 (used 6.3) | 0.601 (used 5.7) |
+
+**Reading.** The probe is near-oracle at both scales (AUROC 0.982 / 0.974), and the same applied strategies — best-of-K selection, selective abstention, restart — give consistent lifts at both. The 1.5B abstention curve (~93% accuracy at 50% coverage) is slightly below 0.5B's (~98%) but still strong. The qualitative finding is that **the probe-as-applied-tool generalizes beyond the rambling regime**: at 1.5B the model does not ramble (~0% multi-answer), and yet the probe still supports a useful selective-prediction and best-of-K mechanism. Note that the cached cross-scale rollouts subselect to prompts that produced a `</think>` token; the absolute pass@1 numbers above are first-block correctness restricted to that subset and should not be compared directly to the n=50 headline pass@1.
+
+### 18.5 First-answer reward RLOO — the verifier-level cure for the rambling reward-hack
+
+The rambling pathology at 0.5B has a clean diagnosis (§3.1, §7): the verifier in `evaluation/countdown.compute_score` scores the *last* `<answer>` block, so RLOO rewards the policy for emitting many candidate blocks and only requires the *final* one to be correct. The probe-applied work in §17 / §18.1–§18.4 is one half of the picture (a deployment-time fix); the other half is to remove the perverse incentive at training time.
+
+We re-ran RLOO from C_SFT with a single change: monkey-patch `evaluation.countdown.compute_score` to score the **first** `<answer>` block instead of the last. All other hyperparameters identical to the original C_outcome run (100 steps, lr=1e-5, KL_coef=1e-4, batch_size=128, n_rollouts_per_prompt=8, max_response_length=1024). Script: `extension/training/firstanswer_rloo.py`.
+
+**Mechanism prediction.** Rewarding first-block correctness removes the gradient that selects for emitting multiple blocks: after the first block, additional blocks can only hurt (if they overwrite a correct first answer) or be neutral (if they're irrelevant). The expected effect is a sharp drop in mean blocks-per-rollout, a corresponding rise in first-block accuracy, and — if the probe-applied results generalize — a smaller pre−assertion gap because the model no longer needs to encode commit-time vs. trace-final distinctions if there's only one commit.
+
+**Status.** The first-answer RLOO run is in progress on Modal (`ap-xeO1zDmat85U3LiC5c9vqQ`, wandb run `1bm6ggzs`); at step 0 reward_mean was 0.265 (vs ~0.46 for vanilla RLOO at step 0, since first-block is a strictly harder target than last-block under C_SFT's policy). Once complete we will: (a) sample 16 rollouts × clean-406 from the new checkpoint; (b) measure mean blocks-per-rollout, first-block accuracy, last-block accuracy (under the original last-block verifier rule), and the position-resolved AUROC gap; (c) compare against vanilla C_outcome to test whether the verifier change kills the rambling reward-hack while preserving the accuracy gain RL provides. This is the cleanest direct test of the probe's mechanism story: if the probe-readable correctness representation is in fact a proxy for the rambling reward-hack, removing the reward-hack should also close the pre−assertion gap.
+
+---
+

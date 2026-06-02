@@ -410,3 +410,79 @@ answer.
   controller).
 - §15 mechanism (b) marked RULED OUT by per-layer evidence; (c)
   promoted to most-supported with steering-null confirmation.
+
+---
+
+## 2026-06-01 -- Corrected-label probe pipeline + applied-probe extensions + first-answer RLOO
+
+### Corrected-label probe (relabel_full_grid + relabel_redo_downstream)
+- The original probe pipeline labeled assertion/pre_answer rows by the
+  rollout's overall verifier score. For multi-answer C_outcome rollouts
+  (87% of clean-406), this is the WRONG label: the probe at assertion
+  position N is morally a prediction of the next <answer> block, not
+  the rollout-final block.
+- Re-labeled every row by the correctness of the IMMEDIATELY NEXT
+  <answer> block. Retrained the probe under corrected labels via
+  GroupKFold(5).
+- Headline AUROCs (0.5B C_outcome L16):
+    pre_answer  0.896  ->  0.980  (+0.084)
+    assertion   0.703  ->  0.852  (+0.149)
+    gap         0.193  ->  0.127  (gap narrows but persists)
+  Same for C_SFT: 0.804/0.785 -> 0.904/0.887.
+- Downstream: matched-pair Mann-Whitney between checkpoints loses
+  significance (8e-16 -> 0.68 NS). The "decoupling between checkpoints
+  at the matched-pair level" framing is downgraded. The probe is much
+  STRONGER than we'd realized: near-oracle at trace-final (0.98).
+- Removed methodological-correction narrative section from writeup
+  per user request -- the original labeling was a mistake on our part,
+  not an interesting phenomenon to report.
+
+### Probe-guided budgeted restart (extension/probe/probe_guided_restart.py)
+- Use the probe at </think> as an early-stopping criterion: sample one
+  rollout, score, accept if probe >= T, else re-sample up to budget B.
+- B=16, T=0.95: acc=0.675 with 6.3 rollouts/prompt vs best-of-16's
+  0.670 with 16 rollouts/prompt. ~60% compute savings at no accuracy
+  cost. Accuracy-vs-compute Pareto front above best-of-K at every B.
+- Figure: extension/outputs/n500/figures/fig18_probe_guided_restart.png
+
+### Probe-guided selective abstention (extension/probe/probe_abstention_and_hybrid.py)
+- Commit only when probe >= T at the first </think>; else abstain.
+- coverage 50%: accuracy 0.980; coverage 33%: 0.992. From 0.549 base.
+- Near-oracle on the half of problems where the model is internally
+  confident. Strongest practical-mechanism use of the probe.
+- Figure: extension/outputs/n500/figures/fig19_probe_abstention.png
+
+### Probe + majority-vote hybrid
+- Test whether the probe is complementary to self-consistency.
+- probe-best-of-16: 0.670; majority-of-16: 0.618; intersection
+  (majority if probe>=0.5, else probe-best): 0.677.
+- Agreement rate 53.7%. On the 188 disagreement prompts, probe-best
+  wins 26 vs majority 5 (5.2x ratio). Probe is STRICTLY complementary,
+  not redundant.
+- Figure: extension/outputs/n500/figures/fig20_probe_majority_hybrid.png
+
+### Cross-scale applied (extension/probe/probe_applied_scale_comparison.py)
+- Apply the same strategies to 1.5B C_outcome cached rollouts.
+- AUROC: 0.5B 0.982 vs 1.5B 0.974 (near-oracle at both).
+- Abstain at 50% coverage: 0.5B 0.980 vs 1.5B 0.931.
+- best-of-16: 0.5B +12.1 pp lift vs 1.5B +8.6 pp lift.
+- The probe-as-applied-tool generalizes beyond the rambling regime.
+  Even at 1.5B (no rambling), the probe still supports a useful
+  selective-prediction and best-of-K mechanism.
+
+### First-answer reward RLOO (extension/training/firstanswer_rloo.py)
+- Monkey-patch evaluation.countdown.compute_score to score the FIRST
+  <answer> block instead of the last. exec rloo_trainer/rloo.py
+  unchanged. Same hyperparameters as vanilla C_outcome.
+- Hypothesis: removing the gradient that selects for multiple <answer>
+  blocks should kill the rambling reward-hack at training time.
+- Running on Modal ap-xeO1zDmat85U3LiC5c9vqQ, wandb 1bm6ggzs.
+- Status at this commit: step 0 reward_mean=0.265, training in
+  progress. Downstream analysis pending: blocks-per-rollout, first-
+  block & last-block accuracy, pre-assertion gap, matched-pair stats.
+
+### Writeup updates
+- New §18 in writeup.md: probe-guided restart, selective abstention,
+  probe+majority hybrid, cross-scale generalization, first-answer
+  RLOO (pending). Updated §0 TL;DR and §17.
+- findings.md: new EXP-14 through EXP-19 entries.
