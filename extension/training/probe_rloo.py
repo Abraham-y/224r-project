@@ -121,51 +121,41 @@ def _install_probe_reward(probe_pkl_path: str, hybrid: bool, layer: int) -> None
 
     def _ensure_reference_model():
         latest = _find_latest_checkpoint()
-        if latest is None:
-            return False  # no checkpoint yet (step 0 sample uses init weights)
-        latest_mtime = os.path.getmtime(latest)
-        if state["model"] is None or state.get("loaded_mtime", 0) < latest_mtime or state.get("loaded_from") != latest:
-            print(f"[probe_rloo] (re)loading reference model from {latest} (mtime={latest_mtime})", flush=True)
+        target = latest if latest else state.get("init_path")
+        if target is None:
+            return False
+        target_mtime = os.path.getmtime(target) if os.path.exists(target) else 0.0
+        if (state["model"] is None
+            or state.get("loaded_mtime", -1) < target_mtime
+            or state.get("loaded_from") != target):
+            print(f"[probe_rloo] (re)loading reference model from {target} (mtime={target_mtime})", flush=True)
             if state["model"] is not None:
                 del state["model"]
                 if torch.cuda.is_available():
                     torch.cuda.empty_cache()
-            state["model"] = AutoModelForCausalLM.from_pretrained(latest, torch_dtype=torch.bfloat16).to(state["device"])
+            state["model"] = AutoModelForCausalLM.from_pretrained(target, torch_dtype=torch.bfloat16).to(state["device"])
             state["model"].eval()
             if state["tokenizer"] is None:
-                state["tokenizer"] = AutoTokenizer.from_pretrained(latest)
-            state["loaded_mtime"] = latest_mtime
-            state["loaded_from"] = latest
+                state["tokenizer"] = AutoTokenizer.from_pretrained(target)
+            state["loaded_mtime"] = target_mtime
+            state["loaded_from"] = target
         return True
 
-    def _init_reference_from(model_path: str):
-        """One-time init: load reference model from a known path (e.g. C_SFT) for step 0."""
-        if state["model"] is not None:
-            return
-        print(f"[probe_rloo] initial reference model load from {model_path}", flush=True)
-        state["model"] = AutoModelForCausalLM.from_pretrained(model_path, torch_dtype=torch.bfloat16).to(state["device"])
-        state["model"].eval()
-        state["tokenizer"] = AutoTokenizer.from_pretrained(model_path)
-        state["loaded_mtime"] = 0.0  # forces reload from disk once latest_checkpoint appears
+    # _init_reference_from no longer needed; loading is fully lazy via _ensure_reference_model.
 
-    # Initial reference model: read --model_name from sys.argv so the
-    # reference matches the policy at step 0. If the policy starts from C_SFT,
-    # reference is C_SFT; if from C_outcome, reference is C_outcome.
-    # As training progresses, _ensure_reference_model() picks up latest_checkpoint.
-    init_path = os.environ.get("PROBE_RLOO_INIT_MODEL")
-    if init_path is None:
-        # Parse --model_name from argv (it stays in argv because main passes it to rloo.py)
-        for i, tok in enumerate(sys.argv):
-            if tok == "--model_name" and i + 1 < len(sys.argv):
-                init_path = sys.argv[i + 1]
-                break
-    if init_path is None:
-        init_path = "asingh15/qwen-sft-countdown-defaultproj"
-    print(f"[probe_rloo] reference model init from --model_name: {init_path}", flush=True)
-    try:
-        _init_reference_from(init_path)
-    except Exception as e:
-        print(f"[probe_rloo] WARNING: could not load initial reference model from {init_path}: {e}", flush=True)
+    # Initial reference model: deferred to first compute_score call (lazy).
+    # We DON'T load anything here at install time to avoid blocking startup
+    # on a possibly-slow HF download. The reference model path is read from
+    # --model_name on first call; subsequent calls reload from latest_checkpoint.
+    state["init_path"] = None
+    state["init_path_default"] = "/vol/checkpoints/rloo_checkpoints/rloo_training/rloo_fixed_v2/latest_checkpoint/model"
+    for i, tok in enumerate(sys.argv):
+        if tok == "--model_name" and i + 1 < len(sys.argv):
+            state["init_path"] = sys.argv[i + 1]
+            break
+    if state["init_path"] is None:
+        state["init_path"] = state["init_path_default"]
+    print(f"[probe_rloo] reference model init DEFERRED; will load lazily from {state['init_path']}", flush=True)
 
     # Reconstruct the asingh15-style chat-template prompt from ground_truth so
     # the probe sees hidden states with the SAME context it was trained on

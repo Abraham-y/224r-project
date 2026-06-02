@@ -635,24 +635,86 @@ Probe is extremely well-calibrated. Overconfidence cases have the same rambling 
 
 ---
 
-### EXP-19: First-answer reward RLOO (verifier-level remedy) ⏳
+### EXP-19: First-answer reward RLOO (verifier-level remedy) ✅ — NULL RESULT
 
-**Question.** The rambling at 0.5B C_outcome is a reward-hack of the verifier's "last-`<answer>`-block wins" rule (§3.1, §7 in writeup). If we monkey-patch the verifier to score the FIRST `<answer>` block instead, does the rambling go away while accuracy is preserved? This is the verifier-level equivalent of probe-as-reward-shaping (the probe is a near-oracle predictor of first-block correctness, so the two reward signals are equivalent).
+**Question.** The rambling pathology at 0.5B C_outcome (87% multi-answer rollouts, mean 7.6 `<answer>` blocks) was hypothesized to be a reward-hack of the verifier's "score-only-the-last-block" rule. If true, rewarding the FIRST block instead should kill the rambling.
 
-**Setup.** `extension/training/firstanswer_rloo.py`: monkey-patch `evaluation.countdown.compute_score` to score the first `<answer>` block, then exec `rloo_trainer/rloo.py` unchanged. Same RLOO hyperparameters as vanilla C_outcome run. Modal app `ap-xeO1zDmat85U3LiC5c9vqQ`, wandb run `1bm6ggzs`.
+**Setup.** `extension/training/firstanswer_rloo.py`: monkey-patched `evaluation.countdown.compute_score` to score the first `<answer>` block. All other RLOO hyperparameters identical to vanilla C_outcome. 100 RLOO steps. Modal run `1bm6ggzs`, total runtime ~5.7h.
 
-**Status.** Training in progress on Modal. At step 0, reward_mean = 0.265 (vs ~0.46 for vanilla RLOO at step 0 — first-block reward is a harder target for C_SFT). Expected completion ~2-3h from launch.
+**Training trajectory:**
 
-**Planned downstream analysis** (when checkpoint completes):
-1. Sample 16 rollouts × clean-406 from the new C_outcome' checkpoint.
-2. Measure mean blocks-per-rollout (vs 7.6 for vanilla C_outcome; expect ≈1).
-3. Measure first-block, last-block accuracy.
-4. Cache hidden states at `</think>` + assertion + neutral; retrain probe; check whether pre−assertion gap shrinks under first-block training.
-5. Compare matched-pair statistics across new C_outcome' vs vanilla C_outcome.
+| step | reward_mean | rollout_acc | resp_len | KL |
+|---|---|---|---|---|
+| 0 | 0.265 | 0.187 | 496 | 0.00 |
+| 50 | 0.573 | 0.530 | 429 | 0.14 |
+| 99 | 0.578 | 0.533 | 376 | 0.55 |
 
-If the gap shrinks under first-answer training, it directly confirms the "rambling-as-mediator-of-decoupling" story.
+Reward + accuracy track vanilla's pace; KL ends at 0.55 (similar to vanilla's 0.51); response length compresses ~25% (training-time only — see below).
 
-**Prediction from EXP-20.** The model's first answer already beats its last (verifier-scored) answer by +5.2pp, so first-answer RLOO should *raise* pass@1, not merely preserve it. If it does not, rambling was load-bearing for accuracy (also a finding).
+**Downstream eval — the actual test:**
+
+Sampled 16 rollouts × 406 clean-406 prompts from the new checkpoint (`extension/probe/firstanswer_block_count.py`):
+
+| Metric | C_SFT | vanilla C_outcome | **firstanswer C_outcome'** |
+|---|---|---|---|
+| Mean blocks/rollout | 2.71 | 6.78 | **6.36** |
+| Multi-answer rate | 60% | 84% | **82%** |
+| One-block rollouts | 29% | 13% | **11%** |
+| First-block accuracy | 0.290 | 0.550 | **0.521** |
+| Last-block accuracy | 0.238 | 0.498 | **0.468** |
+| Mean response length | 2094 | 1969 | 1984 |
+
+**Reading.** Rambling rate **essentially unchanged**: 82% vs 84%, mean blocks 6.36 vs 6.78 (−6%, within noise). The verifier-rule change did NOT suppress the rambling pathology. The model continues to emit multiple `<answer>` blocks even though only the first is rewarded. (Note: training-time `response_length_mean` of 376 was misleading — that's the response under RLOO's sampling constraints. At eval-time the rollouts are 1984 tokens, indistinguishable from vanilla's 1969.)
+
+**Position-gap analysis (extension/probe/firstanswer_probe_analysis.py)** on the new checkpoint's hidden states (cached on Modal at `/vol/probe_cache/probe_cache_firstanswer/`):
+
+| Metric | vanilla C_outcome | firstanswer C_outcome' |
+|---|---|---|
+| pre_answer AUROC (L16, corrected) | 0.982 | **0.974** |
+| assertion AUROC | 0.896 | 0.900 |
+| neutral AUROC | 0.562 | 0.579 |
+| **Gap pre − assertion** | **+0.086** | **+0.074** |
+
+The position-gap moves by only −0.012. Both the rambling behavior AND its representational signature (position-gap) are robust to the first-vs-last-block reward change.
+
+**Implication for the rambling-as-reward-hack story.** Refuted. The simple causal claim — "the verifier scores only the last block, therefore the model emits many blocks for more tries" — does not hold. Rambling is not directly caused by the last-block-scoring rule; it persists when the rule is changed to strictly disfavor multi-block emission.
+
+What probably IS going on: rambling is an SFT-inherited behavior pattern (C_SFT has 60% multi-answer; the `Asap7772/cog_behav_all_strategies` demonstrations encode "wait let me try another approach" structure). RLOO amplifies the rate from 60% → 84% but the gradient signal alone (first- or last-block) does not directly punish emitting more blocks; the KL penalty + cross-entropy keep the multi-block pattern stable.
+
+**Updated story for the headline.** The correlational rambling↔position-gap link (Pearson r = +0.89 across snapshots, §2.2) is preserved. The clean causal mechanism is gone — we can't say "the verifier-rule causes rambling." We can say "rambling and the position-gap co-evolve under RLOO at 0.5B; both are absent at 1.5B; the verifier-rule alone is insufficient to explain them."
+
+**Output files.**
+- `eval_c_firstanswer_n500.json` (16 rollouts × 500 prompts on the new checkpoint)
+- `extension/cache/probe_cache_firstanswer/C_firstanswer_l16_{pre_answer,assertion,neutral}.{npz,meta.json}`
+- `extension/probe/firstanswer_block_count.py`
+- `extension/probe/firstanswer_probe_analysis.py`
+
+**Modal cost.** ~$80 (5.7h training + 18 min Modal sampling + 12 min hidden-state caching).
+
+---
+
+### EXP-21: Probe-RL B (linear probe as RLOO reward) — engineering & methodology notes
+
+Status: in progress. Several runs (1–8) failed during launch due to a chain of engineering issues. The bugs are themselves a methodological contribution about deploying linear probes as RL rewards; documented here.
+
+**Setup.** `extension/training/probe_rloo.py`: monkey-patch `evaluation.countdown.compute_score` to score rollouts via a fixed pickled linear probe applied to L16 hidden states at the `</think>` token. The reference model from which hidden states are extracted is reloaded each round from the latest checkpoint, so the probe sees the CURRENT policy's representation. Two probe variants pickled:
+- `probe_pipeline_C_outcome_l16_pre_answer.pkl` — corrected/first-block labels (AUROC 0.982)
+- `probe_pipeline_C_outcome_l16_pre_answer_lastblock.pkl` — rollout-final labels (AUROC 0.896, matches vanilla RLOO's reward target)
+
+**Dual logging.** `train/probe_mean`, `train/verifier_mean`, `train/probe_minus_verifier` injected into wandb at every RL step. The `probe_minus_verifier` trajectory is the Goodhart diagnostic: widening = policy gaming the probe.
+
+**Engineering issues found (each fixed):**
+
+1. **`warmup_ratio>0` + `lr_schedule=constant` incompatible** (run1) — rloo.py's default warmup_ratio is 0.05 but constant schedule rejects warmup. Fix: `--warmup_ratio 0`.
+2. **OOM at batch=128 with gradient_accumulation_steps=1** (run2) — rloo.py default grad_accum=1 means microbatch = full batch_size × group_size = 1024 rollouts, requiring ~316 GB for the cross-entropy logits tensor. Vanilla and firstanswer used grad_accum=128 (microbatch=8). Fix: `--gradient_accumulation_steps 128`.
+3. **Hardcoded `run1` path in reference-checkpoint loader** (silent on run4) — the `_ensure_reference_model` function had a hardcoded `/vol/checkpoints/.../probe_rloo_run1/latest_checkpoint/model` path, preventing the reference from ever reloading on other run names. Fix: glob across all `probe_rloo_*` run dirs.
+4. **Dual-logging patched `wandb.log` (module function) instead of `Run.log` (the method rloo.py actually calls)** — bug #2. Fix: patch `wandb.sdk.wandb_run.Run.log`.
+5. **Probe saturation to ~0.99 on every rollout** (run4, run6) — root cause: live forward pass extracted the hidden state at token id 29 (`'>'` alone) instead of token id 1339 (`'>\n\n'` — the merged closing-bracket + trailing newlines that `cache_hidden_states.py` extracted during probe training). Different tokens, different hidden state distributions, OOD probe → linear logistic regression saturates to ~1.0 for all inputs. Fix: tokenize prompt + FULL response with `return_offsets_mapping=True`, then locate the token covering the LAST CHARACTER of `</think>` — mirroring `cache_hidden_states.py` exactly. Verified locally on 14/14 sample rollouts.
+6. **Reference model hardcoded to C_outcome regardless of policy init** — fix: read `--model_name` from argv so reference matches policy at step 0 (important for C_SFT-init runs).
+
+**Methodological takeaway.** Deploying a pickled linear probe as an online RL reward is much more brittle than the (offline) "best-of-K probe selector" use case (§17, §18). The probe is calibrated on a specific (prompt, response) tokenization, position extraction, and forward-pass code path. Any small mismatch (different token at the `</think>` position; missing prompt context; etc.) shifts the activation distribution off the probe's calibrated range and causes saturation. For probe-as-reward to work robustly, the live extraction code must mirror the cached extraction byte-for-byte — and that's not trivial.
+
+**run9 (active): C_SFT init + last-block probe + all 6 fixes.** Pending step-0 verification at the time of writing. Hypothesis test: can RLOO training a probe replicate vanilla's SFT→C_outcome accuracy lift (0.30 → 0.55), or does the policy game the probe (probe_mean rises while verifier_mean stays flat)?
 
 ---
 
