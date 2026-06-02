@@ -28,6 +28,8 @@
 | Pearson r(rambling rate, position-gap) across snapshots | — | **+0.891 (p=0.04)** | rambling tracks gap |
 | Causal steering Δ(probe direction − random) | — | [−0.07, +0.02] across α | null |
 | Rambling rate (multi-answer rollouts) | — | **87%** | — |
+| First-answer vs last-answer pass@1 gap (clean-406, EXP-20) | +0.052 | **+0.052** | first > last; McNemar p≈5e-43 |
+| Post-first-answer token waste (clean-406, EXP-20) | 54.0% | **56.2%** | rambling tail = wasted tokens |
 
 ### 1.5B (scale extension) — corrected labels at trace-final
 
@@ -650,6 +652,38 @@ Probe is extremely well-calibrated. Overconfidence cases have the same rambling 
 5. Compare matched-pair statistics across new C_outcome' vs vanilla C_outcome.
 
 If the gap shrinks under first-answer training, it directly confirms the "rambling-as-mediator-of-decoupling" story.
+
+**Prediction from EXP-20.** The model's first answer already beats its last (verifier-scored) answer by +5.2pp, so first-answer RLOO should *raise* pass@1, not merely preserve it. If it does not, rambling was load-bearing for accuracy (also a finding).
+
+---
+
+### EXP-20: Reward-hack cost — first-vs-last answer accuracy + token waste ✅
+
+**Question.** Is the rambling reward-hack *functional* (the model rescues itself wrong→right) or *net-negative* (it drifts right→wrong)? How many tokens does the rambling tail waste, and does the cost grow over RLOO training? This is the no-retraining behavioral counterfactual that predicts EXP-19's outcome.
+
+**Method.** Re-score the EXISTING clean-406 rollouts (no GPU, no generation): score the FIRST `<answer>` block vs the LAST (= verifier default = what was scored), count `<answer>` blocks and the tokens after the first `</answer>` (Qwen fast tokenizer, offset mapping). Exact McNemar two-sided test on discordant pairs. Repeat on the snapshot rollouts (step 30/60/90) on the common clean-∩-first-200 set for the dynamics.
+
+**Headline (full clean-406, 6496 rollouts/ckpt):**
+
+| ckpt | first-blk | last-blk (scored) | Δ | drift→wrong | rescue→correct | McNemar p | mean blocks | tok-waste |
+|---|---|---|---|---|---|---|---|---|
+| C_SFT | 0.290 | 0.238 | **+0.052** | 526 | 188 | 7.0e-38 | 2.78 | 54.0% |
+| C_outcome | 0.550 | 0.498 | **+0.052** | 490 | 150 | 5.2e-43 | 6.96 | 56.2% |
+
+**Dynamics (common clean-∩-first-200, 2672 rollouts/ckpt):** Δ(first−last) is roughly flat (+0.049 / +0.033 / +0.066 / +0.062 / +0.047 across SFT/step30/60/90/final); mean `<answer>` blocks climbs **2.73 → 2.90 → 4.34 → 6.97 → 7.25**.
+
+**Interpretation.**
+1. The model's FIRST answer beats its verifier-scored LAST answer by **+5.2pp on BOTH checkpoints**; drift (correct→wrong) outnumbers rescue ~3:1; McNemar p < 1e-37. **Rambling is net accuracy-DESTROYING**, not functional.
+2. The per-rollout accuracy tax is **~constant (+5pp) and already present at SFT** — RLOO does NOT worsen per-decision judgment; it inflates rambling **volume** (~2.6× blocks) and the token tail (~56% of generated tokens are post-first-answer). RL's contribution to the hack is token bloat, not increased self-sabotage.
+3. Committing to the first answer is a **zero-retraining Pareto move: +5.2pp accuracy AND −56% tokens**.
+
+**Consistency check (vs EXP-15).** Reconciles exactly: single-answer rollouts (16%) are ~10% accurate (first=last); multi-answer (84%) give first=0.636 / last=0.574 (matching EXP-15's `26_probe_answer_commit.txt`). Recomputing the full-set average from these reproduces 0.550 / 0.498.
+
+**Convention note.** This is a *behavioral* (verifier) first-vs-last **answer** comparison — distinct from the EXP-14 next-`<answer>`-block **probe relabeling** (a representation question). Kept separate so it can be compared against a future next-answer-block behavioral experiment.
+
+**Scripts.** `extension/probe/reward_hack_cost.py` → `extension/outputs/n500/text/35_reward_hack_cost.json` + `extension/outputs/n500/figures/fig25_reward_hack_cost.png`. (Branch `reward-hack-cost`.)
+
+**Modal cost.** $0 (local CPU; tokenizer download only).
 
 ---
 
