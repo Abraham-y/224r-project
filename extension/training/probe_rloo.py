@@ -191,28 +191,45 @@ def _install_probe_reward(probe_pkl_path: str, hybrid: bool, layer: int) -> None
     def _probe_score(solution_str: str, ground_truth=None) -> float:
         """Return scalar probe probability in [0, 1] for the rollout's </think> position.
 
-        IMPORTANT: tokenizes prompt+response together (matching how the probe
-        was trained in cache_hidden_states.py), then locates </think> AFTER the
-        prompt. Without the prompt context, the probe receives OOD activations
-        and saturates.
+        MUST mirror cache_hidden_states.py exactly:
+          1. Tokenize prompt + FULL response (not just up to </think>)
+          2. Use offset_mapping to find the token covering the LAST CHARACTER
+             of "</think>" (the '>'). If we truncate the response at </think>,
+             the trailing `>` becomes its own token instead of merging with
+             the following '\n\n' into a single '>\n\n' token, which is what
+             the cache saw -- so the activations differ, probe saturates.
 
         Returns 0.0 if </think> token not found, model not loaded, or any error.
         """
         if state["model"] is None or state["tokenizer"] is None:
             return 0.0
-        if _THINK_CLOSE_TOKEN not in solution_str:
-            return 0.0
-        # Build prompt + response prefix-up-to-</think>
-        idx = solution_str.find(_THINK_CLOSE_TOKEN) + len(_THINK_CLOSE_TOKEN)
-        response_prefix = solution_str[:idx]
         prompt_text = _reconstruct_prompt(ground_truth) if ground_truth is not None else ""
-        full_text = prompt_text + response_prefix
+        full_text = prompt_text + solution_str
+        prompt_end_char = len(prompt_text)
+        think_close_char = full_text.find(_THINK_CLOSE_TOKEN, prompt_end_char)
+        if think_close_char < 0:
+            return 0.0
+        last_char_pos = think_close_char + len(_THINK_CLOSE_TOKEN) - 1
         try:
-            input_ids = state["tokenizer"](full_text, return_tensors="pt").input_ids.to(state["device"])
-            if input_ids.shape[1] < 2: return 0.0
+            enc = state["tokenizer"](
+                full_text,
+                return_offsets_mapping=True,
+                truncation=True,
+                max_length=2048,
+                return_tensors="pt",
+            )
+            input_ids = enc["input_ids"].to(state["device"])
+            offsets = enc["offset_mapping"][0].tolist()
+            # Locate the token whose offset covers the LAST char of "</think>"
+            think_close_tok = None
+            for j, (s, e) in enumerate(offsets):
+                if s <= last_char_pos < e:
+                    think_close_tok = j
+                    break
+            if think_close_tok is None:
+                return 0.0
             out = state["model"](input_ids, output_hidden_states=True, use_cache=False)
-            # Last token corresponds to the final subtoken of the response's </think>
-            h = out.hidden_states[layer][0, -1, :].float().cpu().numpy().reshape(1, -1)
+            h = out.hidden_states[layer][0, think_close_tok, :].float().cpu().numpy().reshape(1, -1)
             score = float(probe.predict_proba(h)[0, 1])
             return score
         except Exception as e:
