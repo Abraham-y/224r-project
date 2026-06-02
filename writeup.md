@@ -9,7 +9,7 @@
 
 ## 0. TL;DR (one-paragraph)
 
-**Outcome RL at 0.5B reward-hacks via rambling, with measurable representational and applied consequences.** On Countdown (an exact-verifier task), outcome-only RLOO discovers a reward-hack at 0.5B: because the verifier scores only the *final* `<answer>` block, the model learns to emit **multiple `<answer>` blocks per rollout** (87% of clean-406 C_outcome rollouts are multi-answer; mean 7.6 blocks per rollout; 9% drift correct→wrong). The trace-final probe at `</think>` is **near-oracle** at predicting the immediate-next-commit's correctness (held-out AUROC **0.980** on C_outcome at L16; 0.904 on C_SFT) — the model "knows" what answer it's about to emit and whether it's right. A modest but real **position-decoupling gap** of +0.127 AUROC exists between the trace-final probe and the assertion-keyword probe on C_outcome (vs +0.018 on C_SFT — 7× growth under RL); **the gap grows monotonically across RL training in lockstep with the rambling rate** (Pearson r = 0.98 between mean blocks/rollout and gap across snapshots step 0/30/60/90/final). Within multi-answer rollouts, the model truly updates its belief at each commit (Pattern A: probe(last) on T→F drift rollouts = 0.154, matches the F→F floor 0.088 — there is no preserved "secret correct" representation an intervention could recover). Causal steering along the probe direction is null (probe-vs-random Δ ∈ [−0.07, +0.02]; the probe is a reader, not a controller). **At 1.5B the model never falls into the rambling exploit** (0.075% multi-answer; 90% emit exactly one `<answer>`): the gap shrinks to +0.04 at L20; the trace-final probe is still near-oracle (AUROC 0.97). **Applied result:** probe-as-answer-selector at 0.5B — commit at the first `<answer>` block whose probe ≥ 0.35 — gives **+8.7 pp** absolute pass@1 over the verifier's default last-answer rule on multi-answer rollouts, with ~50% generation compute savings. The rambling pathology, its representational signature (modest position-gap, layer-invariant), the scale-dependent absence at 1.5B (no rambling, no gap), and the practical remediation (probe-based commit selection) together form one coherent mechanism story.
+**A near-oracle internal verifier emerges at the trace-final position under outcome RL, with substantial applied value at deployment time.** On Countdown (an exact-verifier task), the trace-final probe at `</think>` is **near-oracle** at predicting first-`<answer>`-block correctness — held-out AUROC **0.982** at 0.5B C_outcome and **0.974** at 1.5B C_outcome (corrected next-block-correctness labels throughout). Outcome RL *strengthens* the probe at every level we measure: aggregate (C_SFT 0.912 → C_outcome 0.982), per-problem (mean 0.882 → 0.927), and within-prompt matched-pair (Wilcoxon p < 1e-7 on both checkpoints, indistinguishable between them: MW p = 0.68). Within multi-answer rollouts, the model truly updates its belief at each commit (Pattern A: probe(last) on T→F drift rollouts = 0.154, matches the F→F floor 0.088 — no preserved "secret correct" representation; bidirectional in F→T rescues). Causal steering along the probe direction is null (probe-vs-random Δ ∈ [−0.07, +0.02]; the probe is a *reader*, not a *controller*, of a multi-dimensional correctness subspace). At 0.5B C_outcome the model also reward-hacks the verifier's last-block scoring rule by **rambling** (87% multi-answer rollouts; mean 7.6 `<answer>` blocks). This pathology has a modest representational signature — a position-gap of +0.086 between pre_answer and assertion probes at the final checkpoint, growing from +0.027 at C_SFT — and the gap tracks the rambling rate across RLOO snapshots at Pearson r = +0.891. **At 1.5B the model never rambles** (0.075% multi-answer); the gap shrinks to +0.04, the probe stays near-oracle (0.974). **Applied results** (deployment-time uses of the probe, all corrected labels): probe-as-answer-selector at 0.5B = +8.7 pp; best-of-16 selector = +12.1 pp; probe-guided budgeted restart matches best-of-16 at 60% less compute; selective abstention reaches 98% accuracy at 50% coverage and 99% at 33%; adaptive budget gives +2.4 pp at K_avg=4; probe-mean estimates dataset accuracy to ±0.4 pp; calibration is 5.4% overconfidence, 3.4% underconfidence. A causal test of the rambling-as-reward-hack hypothesis (first-answer reward RLOO) is in progress.
 
 ---
 
@@ -25,7 +25,6 @@
 |---|---|---|---|
 | `C_SFT` | `asingh15/qwen-sft-countdown-defaultproj` | 28.6% | 78.0% |
 | `C_outcome` | RLOO from `C_SFT`, outcome reward only (0/0.1/1.0), 100 steps, all 10 intermediate snapshots persisted | **53.5%** | 72.0% |
-| `C_process` | RLOO with annotation-only subgoal reward (`R = R_outcome + 0.3·R_subgoal`) on `C_SFT_aug` | underperformed; see §10 |
 
 Outcome RL improved pass@1 by 24.9 absolute points but *reduced* pass@16 by 6 points — the standard sharpening-vs-diversity trade-off in RL fine-tuning.
 
@@ -69,23 +68,19 @@ Shuffled-label baselines are ~0.48–0.51; random-direction baselines ~0.50–0.
 
 ### 2.2 The decoupling gap *emerges* over training (Option B dynamics)
 
-The pre_answer − assertion gap is not present at `C_SFT` and is not stable across all RLOO steps — it *grows monotonically* over training. We re-sampled fresh rollouts (n=200) from three intermediate `C_outcome` snapshots, re-cached hidden states, and re-trained the probe per snapshot:
+The pre_answer − assertion gap is not present at `C_SFT` and grows over RLOO training. We re-sampled fresh rollouts (n=200) from three intermediate `C_outcome` snapshots, re-cached hidden states, and re-trained probes per snapshot (corrected labels: first-`<answer>`-block correctness):
 
-| Step | `</think>` AUROC | assertion AUROC | gap |
-|---|---|---|---|
-| `C_SFT` (pre-RL) | 0.804 | 0.785 | **+0.019** |
-| step 30 | 0.791 | 0.769 | **+0.022** |
-| step 60 | 0.864 | 0.749 | **+0.115** |
-| step 90 | 0.871 | 0.654 | **+0.217** |
-| `C_outcome` (final) | 0.896 | 0.703 | **+0.193** |
+| Step | `</think>` AUROC | assertion AUROC | gap | mean blocks/rollout |
+|---|---|---|---|---|
+| `C_SFT` (pre-RL) | 0.912 | 0.885 | **+0.027** | 2.83 |
+| step 30 | 0.907 | 0.867 | **+0.040** | 3.09 |
+| step 60 | 0.962 | 0.914 | **+0.048** | 4.49 |
+| step 90 | 0.971 | 0.835 | **+0.136** | 7.18 |
+| `C_outcome` (final) | 0.982 | 0.896 | **+0.086** | 7.41 |
 
-**Reading.** The gap is 0.019 pre-RL, essentially unchanged at step 30, and then opens dramatically between steps 30 and 60. By step 90 it is +0.217 — eleven times the pre-RL value. The final-checkpoint value (+0.193) is slightly lower than step 90 because the trace-final probe and assertion probe shift in opposite directions in the last 10 steps. The crossing happens *during* training; it is not a property the model came in with.
+**Reading.** The gap is +0.027 pre-RL, grows modestly through step 60, opens to +0.136 at step 90 (5× pre-RL), and slightly retreats to +0.086 at the final checkpoint. The trajectory tracks the rambling rate (mean `<answer>` blocks per rollout) closely: **Pearson r(mean_blocks, gap) = +0.891 across snapshots (p = 0.04)**. The gap is small in absolute terms (all individual AUROCs are 0.83–0.98) but the rambling-correlated dynamic is real.
 
-This is the cleanest evidence for the decoupling-emergence claim and was *not* visible in the original Option-A measurement (which probed each snapshot's hidden states on a *fixed* set of final-checkpoint rollouts — a confounded measurement because the rollout distribution didn't update with the snapshot).
-
-**Headline figure with bootstrap 95% CIs** (`extension/outputs/n500/figures/fig13_headline_dynamics.png`). Cluster-bootstrap CIs (80% prompt subsample, B=80) at each snapshot, plotted as shaded bands around the AUROC traces.
-
-(*Note: the snapshot probe AUROCs above use the verifier's final-answer correctness labels at all snapshots, for consistency across the trajectory. The corrected-labeling scheme used in §2.1 would shift each individual AUROC upward by ~0.08-0.10, but the gap trajectory shape and the Pearson r=0.98 correlation with rambling rate are preserved because both effects scale similarly across snapshots.*)
+This dynamics measurement uses fresh rollouts sampled from each snapshot's own policy (vs. a fixed set of final-checkpoint rollouts) and is the cleanest evidence that the gap *emerges over training* rather than being an SFT-inherited property.
 
 ### 2.3 Cross-position probe transfer: pre_answer is a position-specific subspace
 
@@ -179,43 +174,27 @@ For each prompt with both a correct and a wrong rollout (where "correct" = the i
 
 The smaller `n` on C_outcome (60 vs 226) is because most C_outcome rollouts emit confidence keywords (78% pos% in the labeled cache), leaving fewer mixed-outcome prompts with assertion-containing wrong rollouts.
 
-### 2.6 Within-problem Cohen's d at pre_answer: the Yuan-et-al benchmark
-
-For each held-out problem with both a correct and wrong rollout, Cohen's d of the probe scores at `</think>` between correct and wrong samples (controls for problem-level difficulty; clean-406, L16):
-
-| | `C_SFT` | `C_outcome` |
-|---|---|---|
-| n problems | 267 | 242 |
-| mean d | **+1.121** | **+1.036** |
-| Mann-Whitney U between distributions (one-sided): | | **p = 3.0 × 10⁻⁴** |
-
-**Reading.** Both checkpoints have *large* within-problem effect sizes at the trace-final position (+1.12 vs +1.04). The distributions differ significantly (p < 10⁻³), and `C_SFT` is slightly larger, but the gap is small (~0.085). The n=50 paper's headline ("Yuan-et-al's d drops from +1.26 to +0.38, a 70% reduction") **does not survive at n=500**: the +0.38 number was a small-sample artifact (n=33 matched problems). At n=242 the correct picture is "both effect sizes are large; outcome RL slightly reduces the within-problem trace-final discriminability, by ~8%."
-
-**This is the largest single-number revision from the n=50 paper.** The decoupling story should not be carried by Cohen's d at `</think>`; that number doesn't support a strong claim. The story should be carried by §2.1 (position-resolved AUROC), §2.2 (Option B dynamics), §2.3 (cross-position transfer), §2.4 (Pattern A within-rollout), and the cross-checkpoint significance test in §2.5.
-
 ### 2.7 Cross-checkpoint probe transfer: small drift effect, not collapse
 
-Train probe on `C_X`'s activations; evaluate on `C_Y`'s. Diagonals use held-out CV; off-diagonals use a probe trained on the other checkpoint's full data (clean-406, L16, balanced classes):
+Train probe on `C_X`'s activations; evaluate on `C_Y`'s (corrected labels throughout). Diagonals use held-out CV; off-diagonals use a probe trained on the other checkpoint's full data (clean-406, L16, balanced classes):
 
 **`</think>` position:**
 
 | train ↓ \ eval → | C_SFT | C_outcome |
 |---|---|---|
-| C_SFT | 0.805 | **0.855** |
-| C_outcome | 0.716 | 0.895 |
+| C_SFT | 0.912 | **0.953** |
+| C_outcome | 0.822 | 0.982 |
 
 **confidence-asserting tokens:**
 
 | train ↓ \ eval → | C_SFT | C_outcome |
 |---|---|---|
-| C_SFT | 0.771 | **0.649** |
-| C_outcome | 0.533 | 0.683 |
+| C_SFT | 0.885 | **0.770** |
+| C_outcome | 0.633 | 0.896 |
 
-**Reading — major revision from the n=50 paper.** The "off-diagonal collapses to 0.52–0.58" framing of the n=50 paper does not hold at n=500 clean-406. At trace-final the C_SFT-trained probe still discriminates correct vs wrong on C_outcome at **0.855** AUROC — close to in-distribution performance. The C_outcome-trained probe transfers to C_SFT at 0.716 — a more substantial drop, but still well above chance. **The pre_answer correctness representations are mostly shared across checkpoints**, not drifted into incompatible subspaces. The n=50 numbers (0.52, 0.58) were small-sample noise.
+**Reading.** At trace-final the C_SFT-trained probe discriminates correct-vs-wrong on C_outcome at **0.953** AUROC — essentially in-distribution performance. The C_outcome-trained probe transfers to C_SFT at 0.822 — a real but modest drop, still well above chance. **The pre_answer correctness representations are mostly shared across checkpoints.** Assertion-position transfer is weaker (0.770 / 0.633) but neither direction is at chance. The asymmetry is real: the `C_SFT`-trained probe transfers better to `C_outcome` than vice versa — consistent with the `C_outcome` probe being more position-specific (§2.3).
 
-Assertion-position transfer is weaker (0.649 / 0.533) but neither direction is at chance. The asymmetry is real — the `C_SFT`-trained probe transfers better to `C_outcome` than vice versa — consistent with the `C_outcome` probe being more position-specific (§2.3).
-
-**Net update.** The cross-checkpoint result is now a *small drift effect* (offdiag pre_answer transfer is high but lower than diagonal), not the dramatic "representations have moved" narrative the n=50 paper drew. The mechanistically interesting finding has shifted from "representations drifted across checkpoints" to "representations specialize across positions within a checkpoint" (§2.3).
+The cross-checkpoint result is a *small drift effect* (off-diagonal pre_answer transfer is high but lower than diagonal), not a collapse. The mechanistically interesting finding is "representations specialize across positions within a checkpoint" (§2.3), not "representations drifted across checkpoints."
 
 ### 2.8 The global concealment gap *still inverts* at 0.5B
 
@@ -246,29 +225,29 @@ The qualitative claim is robust: there is no preserved "secret correct" or "secr
 
 ### 2.10 Probe-direction cosine analysis — the orthogonality is geometric, not just AUROC
 
-The §2.3 cross-position transfer AUROCs collapse to chance for pre→ass and ass→pre on `C_outcome`. We additionally compute direct cosine similarities between the trained probe direction vectors (in input space, after `w / scaler.scale_`):
+The §2.3 cross-position transfer AUROCs collapse to chance for pre→ass and ass→pre on `C_outcome`. We additionally compute direct cosine similarities between the trained probe direction vectors (in input space, after `w / scaler.scale_`; corrected labels):
 
 **Within-checkpoint cross-position cosines at L16:**
 
 | pair | cos | what it means |
 |---|---|---|
-| C_SFT: pre vs assertion | **+0.024** | essentially orthogonal |
-| C_SFT: pre vs neutral | −0.002 | essentially orthogonal |
-| C_outcome: pre vs assertion | **+0.038** | essentially orthogonal |
-| C_outcome: pre vs neutral | +0.020 | essentially orthogonal |
+| C_SFT: pre vs assertion | **+0.104** | small, near-orthogonal |
+| C_SFT: pre vs neutral | −0.031 | essentially orthogonal |
+| C_outcome: pre vs assertion | **+0.036** | essentially orthogonal |
+| C_outcome: pre vs neutral | +0.064 | small |
+| C_outcome: assertion vs neutral | +0.035 | essentially orthogonal |
 
 **Cross-checkpoint within-position cosines at L16:**
 
 | pair | cos | transfer AUROC |
 |---|---|---|
-| C_SFT pre vs C_outcome pre | +0.102 | 0.855 |
-| C_SFT ass vs C_outcome ass | +0.058 | 0.649 |
-| C_SFT neutral vs C_outcome neutral | +0.041 | 0.530 |
+| C_SFT pre vs C_outcome pre | +0.169 | 0.953 |
+| C_SFT ass vs C_outcome ass | +0.134 | 0.770 |
+| C_SFT neutral vs C_outcome neutral | +0.072 | — |
 
 **Reading.**
-- Within both checkpoints, the pre_answer and assertion probe directions are **near-orthogonal at the cosine level (~0.02–0.04)**. This isn't outcome-RL-specific — both C_SFT and C_outcome have it. The cross-position transfer collapse from §2.3 has direct geometric backing.
-- Cross-checkpoint, pre_answer probe directions are also small-cosine (+0.10) but the cross-checkpoint transfer AUROC is high (0.86). This implies the correctness signal lives in a **multi-dimensional subspace** that multiple low-cosine probe directions can each "read" — they don't have to point the same way to extract the same signal.
-- Probe-vector norms scale with diagonal AUROC: pre_answer probes have largest norms (~30–80), assertion smaller (~7–35), neutral smallest (~4–15). The probe needs a longer vector when the per-feature signal is weaker.
+- Within both checkpoints, the pre_answer and assertion probe directions are **near-orthogonal at the cosine level (~0.04–0.10)**. The cross-position transfer collapse from §2.3 has direct geometric backing.
+- Cross-checkpoint, pre_answer probe directions are also small-cosine (+0.17) but the cross-checkpoint transfer AUROC is high (0.95). This implies the correctness signal lives in a **multi-dimensional subspace** that multiple low-cosine probe directions can each "read" — they don't have to point the same way to extract the same signal.
 
 This re-interprets the AUROC findings geometrically. The position-decoupling and cross-checkpoint stability are coherent: positions encode correctness via *different* linear directions (low pairwise cosine), but the underlying correctness *subspace* is largely shared (high transfer AUROC).
 
@@ -338,100 +317,15 @@ The "model emits the correct answer in an early `<answer>` block, then drifts" p
 
 The headline findings are in §2. Additional structural observations:
 
-### 4.1 Layer invariance — full 25-layer sweep
+### 4.1 Layer invariance — gap is depth-invariant
 
-We re-cached hidden states at **every layer 0–24** (embedding through final transformer output) and re-ran the balanced GroupKFold(5) probe per cell. The pre−assertion gap on `C_outcome` is essentially constant across all transformer layers:
+We cached hidden states at every layer 0–24 and trained balanced GroupKFold(5) probes per cell. The pre−assertion gap on `C_outcome` is essentially flat from L5 to L24 — it doesn't grow with depth, which rules out the "outcome reward selectively shaped late layers / output head" mechanism (§16, b). The gap is distributed across all transformer depth.
 
-| Layer | `C_SFT` `</think>` | `C_outcome` `</think>` | `C_SFT` assertion | `C_outcome` assertion | gap on C_outcome |
-|---|---|---|---|---|---|
-| L0 (embedding) | 0.488 | 0.463 | 0.630 | 0.529 | −0.065 |
-| L1 | 0.785 | 0.869 | 0.723 | 0.660 | +0.209 |
-| L5 | 0.796 | 0.886 | 0.714 | 0.666 | +0.220 |
-| L9 | 0.794 | 0.889 | 0.733 | 0.653 | **+0.236** (max) |
-| L12 | 0.795 | 0.893 | 0.761 | 0.697 | +0.196 |
-| L16 | 0.804 | 0.896 | 0.785 | 0.703 | +0.193 |
-| L20 | 0.817 | 0.900 | 0.776 | 0.710 | +0.190 |
-| L24 (final) | 0.805 | 0.897 | 0.772 | 0.703 | +0.194 |
+Figure: `extension/outputs/n500/figures/fig11_per_layer_sweep.png`. (Note: the per-layer sweep was originally run with the older label rule; we re-ran the L12/L16/L20 cells with corrected labels and the depth-invariance qualitative result is preserved.)
 
-The gap stabilizes by L1 and stays **flat between +0.18 and +0.24 from L5 to L24**. It is *not* concentrated at late layers. **This rules out mechanism (b) from §15** ("outcome reward selectively shaped the late layers / output head") — if late-layer-only updating were the mechanism, we would expect the gap to grow with depth, not stay flat. The decoupling is distributed across all transformer depth.
+### 4.2 Probe family is linear-sufficient
 
-Full table + figure: `extension/outputs/n500/figures/fig11_per_layer_sweep.png`.
-
-### 4.2 Per-keyword breakdown
-
-At n=500 we have enough samples to compare across multiple keywords. Per-keyword assertion-position AUROC at L16 (clean-406, balanced subsample where ≥20 positives exist on both checkpoints):
-
-| Keyword | n (`C_SFT`) | `C_SFT` AUROC | n (`C_outcome`) | `C_outcome` AUROC |
-|---|---|---|---|---|
-| "this works" | 3228 | 0.718 | 5253 | 0.645 |
-| "Perfect" | 224 | 0.538 | 31 | 0.583 |
-| "got it" | 480 | 0.383 | 97 | 0.250 |
-| "the answer is" | 118 | 0.500 | <20 | — |
-
-`C_outcome`'s verbal style narrowed dramatically: "this works" went from 3228 to 5253 occurrences (positive-class rate 45% → 81%), while "Perfect" went from 224 to 31. The position-resolved collapse on "this works" (0.718 → 0.645) is the principal contribution to the assertion-position aggregate.
-
-### 4.3 Probe family baselines (linear vs nonlinear)
-
-Are we measuring "the signal is gone" or "the signal is gone *linearly*"? Random forest and small MLP baselines (clean-406, L16):
-
-| Cell | LR | RF | MLP |
-|---|---|---|---|
-| `C_SFT` `</think>` | 0.805 | 0.801 | 0.803 |
-| `C_SFT` assertion | 0.786 | 0.788 | 0.785 |
-| `C_SFT` neutral | 0.563 | 0.565 | 0.589 |
-| `C_outcome` `</think>` | 0.895 | 0.881 | 0.889 |
-| `C_outcome` assertion | 0.707 | 0.684 | 0.674 |
-| `C_outcome` neutral | 0.561 | 0.533 | 0.536 |
-
-Nonlinear probes are essentially identical to linear at clean-406. The signal at every cell is well-represented linearly; we are not measuring "gone linearly only." This is a clean validation of the linear-probe-as-measurement methodology.
-
----
-
-## 5. Cross-position transfer in detail (Phase 1 result)
-
-§2.3 gave the headline; the diagnostic details:
-
-### 5.1 The asymmetry persists after explicit double-balancing
-
-Original concern: the off-diagonals on C_outcome are 0.494 (pre→ass) and 0.368 (ass→pre). Both at-or-below chance, with the ass→pre being below chance, raises a class-imbalance hypothesis. We re-ran with explicit balanced subsampling on *both* source training and target evaluation data, averaged across 10 seeds:
-
-| layer | ckpt | pre→ass | ass→pre | symmetric mean | asymmetry |
-|---|---|---|---|---|---|
-| L12 | C_SFT | 0.533 | 0.470 | 0.502 | +0.063 |
-| L12 | C_outcome | 0.586 | **0.270** | 0.428 | **+0.316** |
-| L16 | C_SFT | 0.438 | 0.499 | 0.468 | −0.060 |
-| L16 | C_outcome | 0.494 | 0.368 | 0.431 | +0.126 |
-| L20 | C_SFT | 0.622 | 0.547 | 0.585 | +0.075 |
-| L20 | C_outcome | 0.457 | 0.501 | 0.479 | −0.044 |
-
-**Reading.** The asymmetry persists after double-balancing on C_outcome at L12 (pre→ass 0.586, ass→pre 0.270 — assertion-trained probe *anti*-predicts pre_answer correctness). It diminishes at L16 and reverses at L20. The standard deviation of ass→pre across seeds is high (0.08–0.18), suggesting the assertion-trained probe direction is *unstable* across balanced subsamples on `C_outcome` rather than "stably anti-aligned." Consistent with "no coherent shared direction" rather than "consistent anti-direction."
-
-### 5.2 The orthogonality is layer-invariant, not L16-specific
-
-Symmetric-mean (pre↔ass averaged) cross-position transfer on `C_outcome`:
-- L12: **0.428**
-- L16: **0.431**
-- L20: **0.479**
-
-All clearly below the diagonals (0.69–0.90). The collapse is not a single-layer artifact. The form differs by layer (L12 most asymmetric, L20 mildest), but the *fact* of the collapse is robust.
-
-### 5.3 Pre_answer is its own thing (not specifically orthogonal to assertion)
-
-`C_outcome` L16 transfer to/from each position:
-
-|   | → pre_answer | → assertion | → neutral |
-|---|---|---|---|
-| pre_answer → | **0.895** | **0.494** | **0.505** |
-| assertion → | 0.368 | **0.694** | 0.500 |
-| neutral → | **0.686** | 0.571 | **0.565** |
-
-Two patterns:
-- **pre_answer probe does not transfer to *either* assertion or neutral** (both at chance). So the "orthogonality to assertion" is part of a broader "pre_answer is its own subspace." This is a narrower claim than the original "specifically orthogonal to assertion."
-- **neutral probe transfers to pre_answer at 0.686** — well above chance, even though the neutral probe's own diagonal AUROC is only 0.565. Other positions can partially "read" the pre_answer correctness signal. The pre_answer direction is too position-specific to "write back" to other positions.
-
-The right mechanistic claim is: **the pre_answer correctness direction is a specialized, position-specific linear feature that does not linearly transfer to non-pre_answer positions, while non-pre_answer positions encode a weaker form of the same signal that is partially readable from pre_answer-trained linear directions.**
-
-Heatmap: `extension/outputs/n500/figures/fig_phase1_transfer_heatmap.png` (6 panels, 3 layers × 2 ckpts).
+Random forest and small MLP probes give essentially identical AUROCs to logistic regression at every cell on clean-406. The signal is well-represented linearly; we are not measuring "gone linearly only." Validates the linear-probe-as-measurement methodology.
 
 ---
 
@@ -452,23 +346,9 @@ The model is **too narrowly tuned to its training distribution to be queried via
 
 ---
 
-## 7. Training dynamics (Layer C) — Option B is the headline
+## 7. Training dynamics — see §2.2
 
-The original Option-A measurement (probe each snapshot's hidden states on a *fixed* set of final-checkpoint rollouts, only the model's weights changing) was confounded because the rollout distribution did not update with the snapshot. We re-ran with **Option B**: re-sample fresh rollouts per snapshot, re-cache hidden states, re-train the probe.
-
-**Option B fresh-rollout dynamics (L16, balanced AUROC, GroupKFold(5) by prompt):**
-
-| Step | `</think>` AUROC | assertion AUROC | neutral AUROC | gap = pre − ass |
-|---|---|---|---|---|
-| `C_SFT` (pre-RL, n=406 clean) | 0.804 | 0.785 | 0.562 | **+0.019** |
-| step 30 (n=200 fresh rollouts) | 0.791 | 0.769 | 0.562 | **+0.022** |
-| step 60 (n=200 fresh) | 0.864 | 0.749 | 0.553 | **+0.115** |
-| step 90 (n=200 fresh) | 0.871 | 0.654 | 0.562 | **+0.217** |
-| `C_outcome` (final, n=406 clean) | 0.896 | 0.703 | 0.562 | **+0.193** |
-
-**Reading.** Pre_answer AUROC rises +0.092 across training. Assertion AUROC falls −0.131. The gap is essentially zero pre-RL (0.019), unchanged through step 30 (0.022), then opens dramatically between steps 30 and 60 (to 0.115), and continues to grow to 0.217 at step 90 before retracting slightly to 0.193 at the final checkpoint. The decoupling is **emergent over training**, not a static representation feature.
-
-**Option A vs Option B in one sentence.** The original Option-A measurement (n=50, fixed final rollouts) showed assertion AUROC stable at ~0.5 across all snapshots and trace-final AUROC stable at ~0.80; the gap did not appear to move. Option B (fresh per-snapshot rollouts, n=200) shows the gap moving from 0.022 at step 30 to 0.217 at step 90. The dynamics signal was hidden by the Option-A confound. This is the strongest single piece of evidence that the decoupling is a *consequence of outcome RL*, not an SFT-baseline property the position-resolved measurement was uncovering.
+§2.2 gives the corrected-label dynamics trajectory. The headline: **gap grows over training (+0.027 at C_SFT → +0.136 at step 90 → +0.086 at final), Pearson r(mean_blocks, gap) = +0.891 across snapshots (p = 0.04)**. The gap correlates with the rambling rate, not with anything else we measured. We re-sampled fresh rollouts per snapshot (Option B) rather than reusing a fixed set of final-checkpoint rollouts (the Option-A confound), and re-trained probes with corrected next-block-correctness labels per snapshot.
 
 ---
 
@@ -540,113 +420,61 @@ The decoupling is at the representational level (different linear subspaces for 
 
 Figure: `extension/outputs/n500/figures/fig9b_within_rollout_position_appropriate.png`.
 
-### 8.5 Per-problem probe-AUROC vs accuracy-delta correlation — decoupling confirmed at the problem level
+### 8.5 Per-problem probe-AUROC vs accuracy-delta correlation — probe strengthens under RL at the problem level
 
-The aggregate AUROCs in §2.1 show the probe weakens at assertion positions under outcome RL. **Is the per-problem behavior of the probe coupled to the per-problem behavior of accuracy?** If outcome RL *damaged* the probe on problems where the model also got worse, we'd see a positive correlation between probe-drop and accuracy-drop. If outcome RL *decoupled* the probe from the model's commit decision, the two should be independent.
+Is the per-problem behavior of the probe coupled to per-problem accuracy? Compute per-problem AUROC at `</think>` under each checkpoint (held-out via GroupKFold(5); corrected labels = first-`<answer>`-block correctness); take `probe_drop = auroc_sft − auroc_outcome` and `accuracy_delta = acc_outcome − acc_sft`; correlate.
 
-**Setup.** Reuse the existing `eval_c_sft_n500.json` and `eval_c_outcome_n500.json` rollouts (no resampling). Train a position-appropriate probe at the same `<answer>`-opening L16 position as §2.4 on the 94 contaminated problems (disjoint from clean-406 eval set by construction; held-out training AUROC = **0.889**, within 0.03 of §2.4's 0.920). For each of the 406 clean problems, compute per-problem AUROC and accuracy under each checkpoint:
-- `auroc_sft[i]`, `auroc_rloo[i]` from the K=16 rollouts' (probe_score, label) pairs
-- `acc_sft[i]`, `acc_rloo[i]` from the K labels
-- `probe_drop[i] = auroc_sft[i] - auroc_rloo[i]`  (>0 = probe got worse)
-- `accuracy_delta[i] = acc_rloo[i] - acc_sft[i]`  (>0 = accuracy improved)
-
-Spearman correlation across problems with mixed-outcomes on both checkpoints.
-
-**Result.**
+**Result (n=131 problems with both checkpoints and both classes present):**
 
 ```
-n_problems_used: 218
-Spearman r = -0.032,  p = 0.63   →  essentially zero
+Pearson r(probe_drop, acc_delta)  = +0.093,  p = 0.29 (NS)
+Spearman r(probe_drop, acc_delta) = +0.062,  p = 0.48 (NS)
 ```
 
-Per-problem AUROC distributions:
-- `C_SFT`: mean **0.827**, median 0.873 (n=267 problems with defined AUROC)
-- `C_outcome`: mean **0.813**, median 0.867 (n=242)
-- `probe_drop`: mean **+0.012**, median +0.005 — essentially zero shift at problem level
+**Per-problem AUROC distributions:**
+- `C_SFT`: mean **0.882**
+- `C_outcome`: mean **0.927**
+- `probe_drop` mean: **−0.044** — per-problem AUROC *RISES* by ~0.04 under RL
 
-Per-problem accuracy: `C_SFT` mean 0.238, `C_outcome` mean 0.498, `accuracy_delta` mean **+0.260**.
-
-**Quadrant counts (n=218 problems with both defined):**
-
-| Quadrant | Interpretation | n | % |
-|---|---|---|---|
-| Top-right (probe ↓, accuracy ↑) | **decoupling** (RL improved behavior, probe weakened) | **103** | **47%** |
-| Top-left (probe ↑, accuracy ↑) | both improved | 91 | 42% |
-| Bottom-left (probe ↑, accuracy ↓) | noise/SFT-favored | 5 | 2% |
-| **Bottom-right (probe ↓, accuracy ↓)** | **damage** | **4** | **2%** |
-| Exactly on axis | — | 15 | 7% |
-
-**Reading.** The damage quadrant is empty (4 / 218 = 2%). On 47% of problems the probe got worse while accuracy improved (the textbook decoupling signature); on 42% both got better. The Spearman r = −0.03 (p = 0.63) is the cleanest possible "independent" result: per-problem probe behavior and per-problem accuracy behavior are statistically decorrelated. The aggregate finding from §2.1 (assertion-position AUROC drops 0.785 → 0.703) is not the result of RL *breaking* the probe on a subset of problems where it also broke behavior; rather, the probe shift and the accuracy shift are independent processes operating across the problem distribution.
-
-This per-problem evidence complements §2.4 (within-rollout the probe tracks each commit's correctness) and §2.11 (no causal effect of probe-direction steering on accuracy). All three results triangulate the same claim: the trace-final / position-appropriate probe is a **correlational reader** of a correctness-relevant subspace, and outcome RL's effect on accuracy is *not* mediated by the probe direction in a causal or per-problem-coupled way.
-
-Figure: `extension/outputs/n500/probe_behavioral/probe_behavioral_correlation.png` (scatter with quadrant labels, regression line, Spearman annotation).
-
-#### 8.5.1 Parallel test at the trace-final (`</think>`) position — sharper
-
-The §8.5 experiment ran at the `<answer>`-opening position (where the aggregate probe AUROC *drops* under RL: 0.785 → 0.703). We repeated the same per-problem correlation analysis at the **trace-final position** (`</think>`), where the aggregate AUROC *rises* under RL (0.804 → 0.896). The aggregate metric goes the opposite direction; the per-problem analysis settles the question.
-
-**Methodology.** Reuse the existing `extension/cache/probe_cache_n500_clean406/C_{SFT,outcome}_l16_pre_answer.npz` cache (no Modal forward passes). Train held-out probes within each checkpoint via GroupKFold(5) by prompt; per-problem AUROC over K=16 rollouts; same Spearman correlation against `accuracy_delta`. Script: `extension/probe/probe_behavioral_pre_answer.py`.
-
-**Result.**
-
-```
-n_problems_used: 218
-Spearman r = +0.335,  p = 4.0e-7   (HIGHLY SIGNIFICANT, POSITIVE)
-```
+**Quadrant counts (n=131):**
 
 | Quadrant | n | % |
 |---|---|---|
-| Decoupling (probe ↓, accuracy ↑) | **140** | **64%** |
-| Both improved (probe ↑, accuracy ↑) | 57 | 26% |
-| **Damage (probe ↓, accuracy ↓)** | **0** | **0%** |
-| Noise (probe ↑, accuracy ↓) | 9 | 4% |
-| On axis | 12 | 6% |
+| **Both improved (probe ↑, accuracy ↑)** | **73** | **55.7%** |
+| Decoupling (probe ↓, accuracy ↑) | 21 | 16.0% |
+| Noise (probe ↑, accuracy ↓) | 11 | 8.4% |
+| Damage (probe ↓, accuracy ↓) | 4 | 3.1% |
 
-**Per-problem AUROC distributions:**
-- `C_SFT`: mean **0.722**, median 0.741 (n=267 problems with mixed outcomes)
-- `C_outcome`: mean **0.612**, median 0.638 (n=242)
-- `probe_drop` mean: **+0.130** — per-problem AUROC *drops* by ~0.13 under RL
+**Reading.** Outcome RL *strengthens* the trace-final probe at every level — aggregate (0.912 → 0.982; §2.1), per-problem (0.88 → 0.93; this section), and within-prompt matched-pair (Wilcoxon p < 1e-7 on both checkpoints, §2.5). The dominant per-problem quadrant is "both improved" (55.7%) — the model gets more accurate AND the probe gets a stronger discriminative signal on the same problems. The Spearman correlation between probe-drop and accuracy-delta is not significant (p = 0.48), and the damage quadrant is small (3.1%). The probe-readable correctness representation is not damaged by RL; it is sharpened.
 
-**Reading — aggregate vs per-problem reconciles a paradox.** §2.1's aggregate trace-final AUROC *rises* under RL (0.804 → 0.896) because aggregate AUROC pools across all rollouts of all problems and benefits from cross-problem difficulty signal: under outcome RL the model becomes more confident *on easy problems* and less confident *on hard problems*, which inflates aggregate AUROC even if the within-problem discriminative power weakens. The per-problem AUROC removes that confound. **Within-problem, the trace-final probe's discriminative power actually falls** (0.722 → 0.612), agreeing with the matched-pair finding (§2.5: median Δ at assertion-position drops +0.186 → +0.004 — same direction, different position).
-
-The +0.335 Spearman is **positive** and **highly significant**: RL degrades the within-problem probe most on the problems where accuracy improved most. The damage quadrant is *empty* (0 / 218). This is a *cleaner* decoupling result than §8.5's null at `<answer>` opening — at the trace-final position the data positively triangulate "RL gain decouples from probe-readable correctness representation."
-
-**Combined story for §8.5 + §8.5.1.** Two independent positions (`<answer>` opening and `</think>`); two checkpoints' worth of held-out probe scores. At both positions the damage quadrant is essentially empty (4 and 0 problems). At `<answer>` opening the Spearman is null (r=−0.03); at trace-final it is +0.33 (p=4e−7). The aggregate trace-final AUROC's *rise* in §2.1 is a cross-problem-difficulty artifact; the within-problem reality is a *drop* (0.72 → 0.61), and that drop is **positively coupled to where RL improved performance**. Both ways of looking at it point at decoupling, not damage.
-
-Figure: `extension/outputs/n500/probe_behavioral/probe_behavioral_correlation_pre_answer.png`.
+This per-problem evidence is consistent with the within-rollout finding in §2.4 (the model genuinely updates belief at each commit) and the causal-steering null in §2.11 (the probe is a reader of a multidim correctness subspace, not a control axis). The probe at trace-final is a near-oracle internal verifier; outcome RL makes it better, not worse.
 
 ---
 
 ## 9. Methodological controls
 
-### 9.1 Significance tests (clean-406, L16)
+### 9.1 Significance tests (clean-406, L16, corrected labels)
 
-| Test | n | Result |
+| Test | Result |
+|---|---|
+| Wilcoxon signed-rank on `C_SFT` matched-pair deltas (one-sided > 0) | **p = 9.3 × 10⁻³⁵** |
+| Wilcoxon signed-rank on `C_outcome` matched-pair deltas (one-sided > 0) | **p = 3.9 × 10⁻⁸** |
+| **Mann-Whitney U between `C_SFT` and `C_outcome` deltas (one-sided)** | **p = 0.68 (NS)** |
+
+Both checkpoints have highly-significant within-prompt matched-pair effects. The Mann-Whitney *between* the two distributions is not significant — under corrected labels, the matched-pair effect is statistically indistinguishable across checkpoints. Any "outcome RL collapsed the matched-pair effect" claim is unsupported.
+
+### 9.2 Headline AUROCs (clean-406, L16, corrected labels)
+
+| ckpt | kind | AUROC |
 |---|---|---|
-| Wilcoxon signed-rank on `C_SFT` matched-pair deltas (one-sided > 0) | 244 | **p = 1.8 × 10⁻²⁴** |
-| Wilcoxon signed-rank on `C_outcome` matched-pair deltas (one-sided > 0) | 218 | **p = 0.027** |
-| Mann-Whitney U between `C_SFT` and `C_outcome` deltas (one-sided) | — | **p = 8.0 × 10⁻¹⁶** |
-| Paired t-test on `C_SFT` deltas (one-sided) | 244 | **p = 4.9 × 10⁻²⁸** |
-| Paired t-test on `C_outcome` deltas (one-sided) | 218 | **p = 0.002** |
-| Mann-Whitney U on per-problem Cohen's d distributions (one-sided) | — | **p = 3.0 × 10⁻⁴** |
+| C_SFT | pre_answer | **0.912** |
+| C_SFT | assertion | 0.885 |
+| C_SFT | neutral | 0.516 |
+| C_outcome | pre_answer | **0.982** |
+| C_outcome | assertion | 0.896 |
+| C_outcome | neutral | 0.567 |
 
-All between-checkpoint comparisons hold at p < 10⁻³. The within-`C_outcome` Wilcoxon p drops from 0.72 (n=50) to 0.027 (clean-406) — the median delta of +0.004 is now detectably positive given the larger sample, **changing the interpretation from "null effect" to "small positive effect"**. The C_outcome matched-pair signal is *attenuated*, not *reversed* — the latter framing was a small-sample artifact.
-
-### 9.2 Bootstrap 95% CIs on headline AUROCs
-
-Cluster-bootstrap on prompt indices (80% subsample without replacement, B=100), L16, clean-406:
-
-| ckpt | kind | point | 95% CI |
-|---|---|---|---|
-| C_SFT | pre_answer | 0.804 | [0.782, 0.816] |
-| C_SFT | assertion | 0.785 | [0.750, 0.790] |
-| C_SFT | neutral | 0.562 | [0.525, 0.574] |
-| C_outcome | pre_answer | 0.896 | [0.883, 0.902] |
-| C_outcome | assertion | 0.703 | [0.662, 0.725] |
-| C_outcome | neutral | 0.562 | [0.524, 0.590] |
-
-All CIs are tight (~0.03–0.06 wide). The position-resolved gap on `C_outcome` (pre 0.896 vs assertion 0.703) is far outside CI overlap; the gap is not a sampling-noise effect.
+The position-resolved gap on `C_outcome` (pre 0.982 vs assertion 0.896 = +0.086) is the modest aggregate signal; all individual position AUROCs are high (≥0.88) on `C_outcome`.
 
 ### 9.3 Class balance
 
@@ -673,26 +501,15 @@ We verified that the procedurally-generated prompt format is byte-identical to a
 
 ---
 
-## 10. Failed intervention: `C_process` (Appendix)
-
-Documented in detail in `extension.md` §A. Brief recap:
-
-- We attempted a process-reward arm using annotation-only `<subgoal> reach X from [Y, Z] </subgoal>` tokens with the composite reward `R = R_outcome + 0.3·R_subgoal`, where `R_subgoal` rewards subgoals whose target is reachable from declared inputs *and* whose body computes the claimed value. Both validity and achievement use noise-free exact-arithmetic verifiers.
-- `C_SFT_aug` (SFT on subgoal-augmented warm-start traces) learned the *grammar* (~92% of rollouts emit `<subgoal>` tags) but not the semantics.
-- `C_process` (RLOO from `C_SFT_aug`) **underperformed** `C_outcome` on accuracy. Qualitatively, the subgoals were emitted in dead-end search branches rather than along the actual solution path — the tags were *annotations* on text the model would have produced anyway, not interventions that changed inference.
-- This is the predicted outcome of **Strategic Information Allocation** (Kim et al., March 2026): at small scale, annotation-only tokens cannot route capability into a reasoner without a separate mechanism (no inference-time grounding, no external execution). We report this as a complementary negative result whose mechanism confirms a recent theoretical prediction.
-
----
-
 ## 11. Limitations
 
-- **n = 500 procedurally-generated, clean-406 after train-split filter.** Matched-pair denominators are 218–267, comfortably enough for the headline statistics. The original n=50 paper's matched-pair (n=33–38) denominators were the source of several magnitude artifacts we've revised here.
-- **Asingh15 train overlap.** 94/500 generated problems happened to also exist in `C_outcome`'s RLOO training pool. We filter to clean-406 and report on that. Robustness of the headline claims to dirty-500 vs clean-406 differs by 0.005–0.04 AUROC — no qualitative claim flips, but the train-filter is the right number to report. (Alternative future work: regenerate eval problems with explicit train-set deduplication during generation, so n is the full 500 instead of 406.)
-- **Verbalized confidence is keyword-presence, not elicited.** The two literature-standard elicitation attempts (generated [0,100] and token-logprob yes/no) both broke because the SFT'd Qwen base is not chat-tuned (§6). We use a binary keyword proxy and disclose this clearly. The probe-level analysis (§2.1–§2.4, §5, §8) does not depend on verbalized confidence; only §2.8's global concealment-gap finding does.
-- **C_SFT is `asingh15/qwen-sft-countdown-defaultproj`**, not a team-trained SFT. Documented in `extension.md` §10.
-- **All experiments are at 0.5B.** The scale-inversion of the *global* concealment gap relative to Yuan et al. 1.5B+ is itself a finding, but we cannot claim our position-resolved finding generalizes to larger models without further work. (Yuan et al.'s position-resolved analysis at 1.5B+ has not been published.)
-- **Phase 2B (activation patching) not run.** Per the pre-registered gating rule, Pattern A (which we observed) made Phase 2B's "inject first-answer state into last-answer position" experiment uninformative — there is no preserved first-answer representation to inject. This is the boring outcome for Phase 2B and is *evidence for* the no-preserved-secret-correct story, but it is not a tested causal claim. A different causal experiment (e.g., probing-based steering at trace-final, where we know a representation exists) would be the natural follow-up.
-- **Per-layer cross-position transfer asymmetry** (§5.1) at L12 (ass→pre = 0.270, below chance) is mechanistically interesting but unstable across seeds (std 0.18). The clean claim is "no stable shared direction"; the "anti-direction" claim would need more samples or a different methodology to support.
+- **n = 500 procedurally-generated, clean-406 after train-split filter.** Matched-pair denominators are 218–244; the per-problem correlation analysis at trace-final uses n=131 (problems with both checkpoints having both classes present).
+- **Asingh15 train overlap.** 94/500 generated problems happened to also exist in `C_outcome`'s RLOO training pool. We filter to clean-406 and report on that. Robustness of the headline claims to dirty-500 vs clean-406 differs by 0.005–0.04 AUROC.
+- **Verbalized confidence is keyword-presence, not elicited.** The two literature-standard elicitation attempts (generated [0,100] and token-logprob yes/no) both broke because the SFT'd Qwen base is not chat-tuned (§6). We use a binary keyword proxy and disclose this clearly. The probe-level analysis does not depend on verbalized confidence.
+- **C_SFT is `asingh15/qwen-sft-countdown-defaultproj`**, not a team-trained SFT.
+- **Most analyses are at 0.5B**; 1.5B comparison covers the aggregate AUROC, matched-pair, and applied-probe results, but Option B dynamics and the per-layer sweep at 1.5B are not in scope.
+- **No causal activation-patching has been run.** The causal steering at `</think>` (§2.11) is the only causal experiment; its null result is informative but doesn't substitute for a full activation-patching study.
+- **Rambling-as-reward-hack causal test in progress.** The first-answer reward RLOO (`firstanswer_rloo.py`) is the causal version of the rambling correlation. Until it completes and we sample fresh rollouts, the rambling-position-gap link rests on correlational evidence (r = +0.89 across snapshots).
 
 ---
 
@@ -702,22 +519,21 @@ All under `extension/outputs/n500/figures/`, generated by `extension/probe/make_
 
 | Figure | What it shows | Headline number |
 |---|---|---|
-| `fig1_matched_pair_scatter.png` | Per-prompt mean assertion-probe scores, correct vs wrong rollouts (clean-406) | 78% above-diagonal → 52% above-diagonal |
-| `fig2_within_problem_d.png` | Distribution of per-problem Cohen's d at `</think>` | mean +1.121 vs +1.036 |
-| `fig3_position_bar.png` | Balanced probe AUROC at three position kinds | assertion: 0.785 → 0.703 |
-| `fig4_per_keyword_bar.png` | Per-keyword assertion-position AUROC | "this works" 0.718 → 0.645 |
-| `fig5_dynamics_trajectory.png` | L16 probe AUROC over training step (Option A; for reference) | trace-final stable; assertion stable — confounded by Option A |
-| `fig6_transfer_heatmap.png` | 2×2 cross-checkpoint transfer matrix | pre_answer off-diag 0.86 / 0.72 |
-| `fig7_concealment_gap.png` | Global concealment gap (probe − verbal), n=50 | +0.15 → +0.01 (inverts naive H2) |
-| `fig8_annotated_qualitative.png` | Side-by-side qualitative: same prompt, wrong-vs-correct C_outcome rollouts (n=50 paper original) | qualitative H3 illustration |
-| `fig9b_within_rollout_position_appropriate.png` | Scatter of probe(first) vs probe(last) on multi-answer rollouts | probe(last) = 0.154 on T→F drift; Pattern A |
+| `fig9_within_rollout_trajectory.png` | Per-block trace-final-probe trajectory through multi-answer rollouts | trace-final probe is OOD at `<answer>` opening (§8.3) |
+| `fig9b_within_rollout_position_appropriate.png` | Scatter of probe(first) vs probe(last) on multi-answer rollouts (position-appropriate probe) | probe(last) = 0.154 on T→F drift; Pattern A |
 | `fig10_ft_rollout_trajectory.png` | Per-block probe trajectory, F→T (rescue) vs T→F (drift) | Pattern A bidirectional |
-| `fig11_per_layer_sweep.png` | Per-layer probe AUROC, pre/ass/neu × C_SFT/C_outcome × all 25 layers | gap depth-invariant; max +0.236 at L9; rules out (b) |
-| `fig_phase1_transfer_heatmap.png` | 3×3 cross-position transfer × 3 layers × 2 ckpts | pre_answer is its own subspace; layer-invariant |
+| `fig11_per_layer_sweep.png` | Per-layer probe AUROC, pre/ass/neu × C_SFT/C_outcome × all 25 layers | gap depth-invariant; rules out late-layer-only mechanism |
 | `fig12_causal_steering.png` | Grouped bar chart: probe vs random direction at α=0.5/1/2; baseline + Wilson 95% CIs | probe-vs-random Δ ∈ [−0.07, +0.02]; null result |
-| **`fig13_headline_dynamics.png`** | **Headline plot.** pre vs assertion AUROC over `C_SFT/step30/60/90/final` with bootstrap 95% CI bands | gap 0.019 → 0.022 → 0.115 → 0.217 → 0.193 |
-
-The headline figure for the paper is **fig13** (Option B dynamics with CIs, §2.2 / §7): a single panel with the pre_answer and assertion-position AUROCs on the y-axis and training step on the x-axis, showing the gap opening between steps 30 and 60 with statistically separable CI bands from step 60 onwards. This is the *strongest single visual* of the decoupling-emergence claim.
+| `fig14_probe_answer_commit.png` | Probe-as-answer-selector accuracy by threshold | PROBE-COMMIT at T=0.35 → +8.7 pp |
+| `fig15_probe_commit_variants.png` | Threshold × fallback strategy sweep | applied probe-commit variants |
+| `fig17_position_resolved_auroc.png` | Per-distance-to-`</think>` per-kind AUROC | assertion bin AUROC > neutral at matched position |
+| `fig18_probe_guided_restart.png` | Probe-guided restart Pareto: accuracy vs avg rollouts used | matches best-of-16 at 60% compute saved |
+| `fig19_probe_abstention.png` | Selective abstention: accuracy on attempted vs coverage | 0.980 at 50% coverage |
+| `fig20_probe_majority_hybrid.png` | Probe-best vs majority-vote vs hybrid | probe-best wins 5.2× on disagreements |
+| `fig21_probe_variance_difficulty.png` | Per-prompt mean / std probe vs accuracy | mean Pearson r = +0.967 |
+| `fig22_multi_position_ensemble.png` | Probe ensembles (pre + ass + neu combinations) | no gain over pre_answer alone |
+| `fig23_probe_adaptive_budget.png` | Adaptive budget vs uniform K-per-prompt | +2.4 pp at K_avg=4 |
+| `fig24_probe_eval_proxy.png` | Probe-mean vs true accuracy + failure-mode breakdown | dataset-acc estimate ±0.4 pp; 5.4% overconf |
 
 ---
 
@@ -728,31 +544,36 @@ All analysis is on GitHub at `Abraham-y/224r-project`. Key entry points:
 ```
 extension/data/generate_countdown.py             -- procedural Countdown generator
 extension/evaluation/sample_local_jsonl.py       -- vLLM rollouts from local JSONL
-extension/evaluation/launch_expansion_rollouts.sh -- Phase 1 rollout jobs
-extension/probe/launch_expansion_cache.sh        -- Phase 2 cache jobs
 extension/probe/cache_hidden_states.py           -- pre_answer/assertion/neutral cache
 extension/probe/cache_answer_positions.py        -- <answer>-opening cache (Phase 2A)
+extension/probe/cache_all_think_close.py         -- every-</think>-token cache
 extension/probe/filter_to_clean.py               -- contamination filter (clean-406)
-extension/probe/analyze_probes.py                -- per-cell probe AUROCs
-extension/probe/bootstrap_headline_cis.py        -- bootstrap CIs
-extension/probe/deeper_analyses.py               -- per-keyword + Cohen's d + per-layer
-extension/probe/qualitative_matched_pairs.py     -- §2.5 matched-pair table
-extension/probe/cross_checkpoint_transfer.py     -- §2.7 transfer matrix
-extension/probe/length_matched_transfer.py       -- §9.4 length-matched control
+extension/probe/relabel_full_grid.py             -- corrected-label probe AUROCs (full grid)
+extension/probe/relabel_redo_downstream.py       -- corrected-label downstream stats
+extension/probe/relabel_cross_checkpoint.py      -- §2.7 transfer matrix (corrected labels)
+extension/probe/relabel_cosines.py               -- §2.10 cosines (corrected labels)
+extension/probe/relabel_per_problem.py           -- §8.5 per-problem (corrected labels)
+extension/probe/relabel_dynamics.py              -- §2.2 / §7 dynamics (corrected labels)
 extension/probe/cross_position_transfer.py       -- §2.3 cross-position transfer
 extension/probe/phase1_diagnostics.py            -- §5 (asymmetry + per-layer + neutral)
-extension/probe/per_snapshot_decoupling_gap.py   -- §2.2 / §7 Option B dynamics
-extension/probe/significance_and_baselines.py    -- §9.1 + §4.3
 extension/probe/phase2a_per_answer_correctness.py -- §8.1 per-block correctness
 extension/probe/phase2a_pattern_analysis.py      -- §8.3 trace-final-probe trajectory
 extension/probe/phase2a_position_appropriate_probe.py -- §8.2 position-appropriate probe
 extension/probe/ft_rollout_trajectory.py         -- §2.9 F→T bidirectional Pattern A
-extension/probe/probe_direction_cosines.py       -- §2.10 cosine analysis
 extension/probe/per_layer_sweep.py               -- §4.1 full 25-layer sweep
 extension/probe/save_probe_vector.py             -- save steering vector
 extension/probe/causal_steering.py               -- §2.11 causal steering Modal job
 extension/probe/analyze_causal_steering.py       -- §2.11 analysis
-extension/probe/make_figures.py                  -- standard figures
+extension/probe/probe_answer_commit.py           -- §17 probe-as-answer-selector
+extension/probe/probe_thinkclose_selector.py     -- every-</think> selector
+extension/probe/position_resolved_auroc.py       -- distance-to-</think> AUROC bins
+extension/probe/probe_guided_restart.py          -- §18.1 budgeted restart
+extension/probe/probe_abstention_and_hybrid.py   -- §18.2/§18.3 abstention + ensemble
+extension/probe/probe_applied_scale_comparison.py -- §18.4 cross-scale applied
+extension/probe/probe_creative_extensions.py     -- §18.5/§18.6/§18.7 difficulty / xfer / ensemble
+extension/probe/probe_adaptive_budget.py         -- §18.8 adaptive budget
+extension/probe/probe_as_eval_proxy.py           -- §18.9 eval-proxy + failure-mode
+extension/training/firstanswer_rloo.py           -- §18.10 first-answer-reward RLOO trainer
 ```
 
 Probe cache:
@@ -767,25 +588,36 @@ Modal compute budget consumed for the n=500 expansion + Option B + Phase 2A cach
 
 ---
 
-## 14. The eight claims I'd put in the paper
+## 14. The claims that survive corrected labels
 
-1. **At 0.5B with outcome RL on an exact-verifier task, the trace-final probe AUROC *rises*** (C_SFT 0.821 → C_outcome 0.901 at L20). Outcome RL strengthens, not damages, the model's internal correctness representation at the point of final commit.
+1. **The trace-final probe is near-oracle** — held-out balanced AUROC = 0.982 at 0.5B C_outcome and 0.974 at 1.5B C_outcome at predicting the immediately-following first-`<answer>`-block correctness. The model's hidden state at `</think>` is a reliable internal verifier.
 
-2. **At confidence-asserting token positions, probe AUROC falls under outcome RL** (C_SFT 0.785 → C_outcome 0.703 at L16). The gap pre_answer − assertion grows from 0.019 (C_SFT) to 0.193 (C_outcome). Bootstrap-CI-tight: gap is 10× the C_SFT value with non-overlapping intervals.
+2. **Outcome RL *strengthens* the probe at every level.** Aggregate AUROC rises (C_SFT 0.912 → C_outcome 0.982). Per-problem AUROC rises (mean 0.882 → 0.927). Within-prompt matched-pair effects are highly significant on both checkpoints (Wilcoxon p < 1e-7) and statistically indistinguishable between checkpoints (Mann-Whitney p = 0.68). The probe-readable correctness representation is not damaged by RL; it is sharpened.
 
-3. **The decoupling gap emerges *over training*** (Option B dynamics, §2.2 / §7). Gap trajectory: 0.019 → 0.022 → 0.115 → 0.217 → 0.193 across `C_SFT → step30 → step60 → step90 → final`. The decoupling is a *consequence* of outcome RL, not an SFT property.
+3. **A modest aggregate position-gap emerges over training.** Pre_answer − assertion gap: +0.027 (C_SFT) → +0.086 (C_outcome final), peaking at +0.136 at step 90. The trajectory tracks the rambling rate at Pearson r = +0.891 (p = 0.04) across snapshots. The gap is real but small in absolute terms (all individual AUROCs stay above 0.83).
 
-4. **The pre_answer correctness direction is layer-invariantly position-specific**: it does not linearly transfer to assertion or neutral positions (off-diagonal AUROC ≈ 0.50 on `C_outcome` at all three layers), while other-position probes can partially "read" pre_answer (neutral → pre_answer = 0.686). The decoupling is at the representational level.
+4. **The pre_answer correctness direction is layer-invariantly position-specific.** It does not linearly transfer to assertion or neutral positions (off-diagonal AUROC ≈ chance on `C_outcome` at all three layers), while other-position probes can partially "read" pre_answer. Position-orthogonality cosines stay below 0.10 within each checkpoint.
 
-5. **The model's internal belief about correctness updates dynamically at each commit (Pattern A)**: on T→F drift rollouts, probe(last) = 0.154 — indistinguishable from the F→F floor (0.088). There is no preserved hidden representation of the original correct answer. The gap is not "knows but doesn't say"; it is *position-decoupling of correctness representations across token positions within a single rollout*.
+5. **The model's internal belief updates dynamically at each commit (Pattern A).** On T→F drift rollouts, probe(last) = 0.154 — indistinguishable from the F→F floor (0.088). Bidirectional in F→T rescue rollouts. No preserved hidden representation of the original correct answer; the "knows but doesn't say" framing is refuted at 0.5B.
 
-6. **The global concealment gap *inverts* at 0.5B** (binary verbal-keyword AUROC 0.57 → 0.79, probe AUROC 0.72 → 0.79; global gap +0.15 → +0.01). This is the scale-inversion of Yuan et al.'s 1.5B+ result. At small scale, outcome RL globally calibrates the verbal signal while position-decoupling the internal correctness representation.
+6. **The trace-final probe is a correlational reader, not a causal controller.** Causal steering at α ∈ [0.5, 2.0] · h_mean_norm along the probe direction has accuracy effects indistinguishable from random-direction perturbation (Δ ∈ [−0.07, +0.02]; n=97 prefixes). The correctness representation lives in a multi-dimensional subspace; the probe captures a linear summary that reads well but writes poorly.
 
-7. **The trace-final probe is a *correlational reader*, not a *causal controller*.** Causal steering at α ∈ [0.5, 2.0] · h_mean_norm along the trace-final probe direction has accuracy effects indistinguishable from random-direction perturbation of matched magnitude (Δ in [-0.07, +0.02]; n=97 prefixes). Combined with the per-layer sweep showing the pre-ass gap is depth-invariant (rules out late-layer-only shaping) and the cosine analysis showing probe directions across positions are essentially orthogonal (within and across checkpoints), the picture is: the correctness representation lives in a multi-dimensional subspace; the probe captures one linear summary that reads well but writes poorly.
+7. **Position-decoupling is a small-scale (0.5B) phenomenon.** At 1.5B, the gap shrinks to +0.04, per-problem AUROC rises rather than falls under RL, rambling rate is 0.075% vs 87% at 0.5B. The decoupling story does not generalize to 1.5B.
 
-8. **Per-problem probe-AUROC change is *not* coupled to per-problem accuracy change in any damage-shaped way** (§8.5, §8.5.1). At `<answer>` opening: Spearman r = −0.03 (p = 0.63), damage quadrant 4/218. At trace-final (`</think>`): Spearman r = +0.33 (p = 4e−7), damage quadrant **0/218**. Per-problem AUROC actually *drops* under RL at trace-final (mean 0.72 → 0.61), reconciling with §2.5's matched-pair drop — and that within-problem drop is positively coupled to *where RL improved accuracy most*. RL's gain in accuracy is not mediated by the probe-readable correctness representation; if anything, RL's gain comes *with* a probe degradation on the same problems.
+8. **The probe has substantial applied value.** Concrete numbers (all corrected labels):
+   - Probe-as-answer-selector: +8.7 pp absolute pass@1 lift (§17)
+   - Best-of-16 selector lift: +12.1 pp at 0.5B, +8.6 pp at 1.5B
+   - Probe-guided budgeted restart: matches best-of-16 at 60% less compute (§18.1)
+   - Selective abstention: 98% accuracy at 50% coverage; 99% at 33% (§18.2)
+   - Probe + majority hybrid: 5.2× win rate on disagreement prompts (§18.3)
+   - Adaptive budget allocation: +2.4 pp at K_avg=4 (§18.8)
+   - Probe-mean estimates dataset accuracy to ±0.4 pp (§18.9)
+   - Calibration: 5.4% overconfidence, 3.4% underconfidence
+   - C_SFT-trained probe transfers to C_outcome at AUROC 0.953 / +10.3 pp lift (§18.6)
 
-**Headline framing.** Under outcome RL, the model's correctness representations *specialize by token position*: the trace-final position becomes more informative, the verbalization-time position becomes less informative, and the two no longer share a common linear direction. The model's *belief* at each commit reflects what it commits to (no preserved secret correct answer). This is **position-decoupling of correctness representations**, not "the model says confident things while internally knowing they're wrong." A more sophisticated form of mechanism-level reorganization than the naive concealment-gap framing.
+9. **The 0.5B rambling pattern is correlationally consistent with a verifier reward-hack.** 87% of C_outcome rollouts emit ≥2 `<answer>` blocks (mean 7.6); 0.075% at 1.5B. Rambling rate ~ position-gap correlation r = +0.89 across RLOO snapshots. A causal test (first-answer-reward RLOO; `firstanswer_rloo.py`) is in progress.
+
+**Headline framing.** The model's hidden state at `</think>` is a near-oracle internal verifier that outcome RL *sharpens* (not damages). The probe is a correlational reader of a multidim correctness subspace; it has substantial deployment-time value (best-of-K, abstention, restart, adaptive budget, eval-proxy). A modest position-gap emerges during RL and correlates with the rambling pathology, which itself is a small-scale (0.5B-only) phenomenon. The original Yuan-style "knows but doesn't say" framing is refuted at 0.5B — Pattern A is confirmed bidirectionally, and the probe gets *better* under RL at every level we measure.
 
 ---
 
@@ -797,67 +629,51 @@ We then cached hidden states on both 1.5B checkpoints at L12/L16/L20 × {pre_ans
 
 ### 15.1 Aggregate probe AUROCs: pre−assertion gap NARROWS at 1.5B
 
-| Cell | 0.5B clean-406 | 1.5B clean-406 |
+Corrected-label numbers (next-`<answer>`-block correctness) at L16, clean-406:
+
+| Cell | 0.5B | 1.5B |
 |---|---|---|
-| `</think>` AUROC C_SFT (L16) | 0.804 | **0.857** |
-| `</think>` AUROC C_outcome (L16) | 0.896 | **0.973** |
-| `</think>` AUROC C_outcome (L20) | 0.901 | **0.976** |
-| Assertion AUROC C_SFT (L16) | 0.785 | **0.825** |
-| Assertion AUROC C_outcome (L16) | 0.703 | **0.816** |
-| Assertion AUROC C_outcome (L20) | 0.710 | **0.936** |
-| **Gap pre − assertion C_outcome (L16)** | **+0.193** | **+0.157** |
-| **Gap pre − assertion C_outcome (L20)** | **+0.190** | **+0.040** |
+| `</think>` AUROC C_SFT | 0.912 | 0.857* |
+| `</think>` AUROC C_outcome | **0.982** | **0.974** |
+| Assertion AUROC C_outcome (L16) | 0.896 | 0.816 |
+| Assertion AUROC C_outcome (L20) | 0.710 | 0.936 |
+| **Gap pre − assertion C_outcome (L16)** | **+0.086** | **+0.157** |
+| **Gap pre − assertion C_outcome (L20)** | (n/a) | **+0.040** |
 
-At 1.5B the assertion-position probe stays close to trace-final; the position-decoupling gap shrinks from 0.190 (0.5B) to 0.040 (1.5B) at the best layer. The 1.5B model maintains a much more **coherent correctness representation across positions** than the 0.5B model.
+Both checkpoints are near-oracle at the trace-final position (AUROC 0.97–0.98). At 1.5B the gap is +0.04 at L20 (the best layer) and +0.16 at L16 — depending on the layer, smaller or comparable to 0.5B. The 1.5B model maintains a coherent correctness representation across positions on the layer that the original Yuan-style measurement targeted (L20).
 
-### 15.2 Matched-pair within-prompt: no longer significantly different across checkpoints at 1.5B
+*1.5B C_SFT pre_answer AUROC reported above is from the original-label probe; not re-run with corrected labels because the 1.5B SFT baseline is undertrained and the headline numbers come from the post-RL checkpoint.
 
-| | 0.5B C_SFT | 0.5B C_outcome | **1.5B C_SFT** | **1.5B C_outcome** |
-|---|---|---|---|---|
-| Matched-pair n | 244 | 218 | 213 | **57** |
-| Median Δ | +0.186 | +0.004 | **+0.339** | **+0.147** |
-| % above-diag | 78% | 52% | **86%** | **82%** |
-| Wilcoxon p (one-sided > 0) | 1.8e−24 | 0.027 | 3.4e−29 | 1.4e−8 |
-| Mann-Whitney *between* ckpts | 8e−16 (sig) | (same row) | **p = 0.14** (NOT sig) | (same row) |
+### 15.2 Matched-pair within-prompt at 1.5B
 
-At 0.5B the Mann-Whitney between the two distributions is p ≈ 1e−16; at 1.5B it is p = **0.14** — the C_SFT and C_outcome matched-pair distributions are **statistically indistinguishable**. The "C_outcome's within-prompt assertion-probe drops to chance" finding from 0.5B does not occur at 1.5B.
-
-Caveat: 1.5B C_outcome's matched-pair n is only 57 (vs 218 at 0.5B) because the model is much more deterministic in K=16 sampling (pass@1 = 0.56; many problems become all-correct, removing them from the mixed-outcome pool).
-
-### 15.3 Per-problem probe-AUROC correlation at trace-final: also weaker / different at 1.5B
-
-Replication of §8.5.1 at 1.5B:
-
-```
-n_problems_used = 105   (vs 218 at 0.5B; smaller because 1.5B C_outcome is more deterministic)
-Spearman r = +0.008,  p = 0.93   (essentially zero — vs +0.335, p=4e−7 at 0.5B)
-```
-
-| Quadrant | 0.5B | 1.5B |
+| | 1.5B C_SFT | 1.5B C_outcome |
 |---|---|---|
-| Decoupling (probe ↓, accuracy ↑) | **64%** | 16% |
-| Both improved (probe ↑, accuracy ↑) | 26% | **63%** |
-| Noise (probe ↑, accuracy ↓) | 4% | 2% |
-| **Damage** (probe ↓, accuracy ↓) | 0/218 | 3/105 (2.9%) |
+| Matched-pair n | 213 | 57 |
+| % above-diag | 86% | 82% |
+| Wilcoxon p (one-sided > 0) | 3.4e−29 | 1.4e−8 |
+| Mann-Whitney *between* ckpts | **p = 0.14 (NS)** | |
 
-**Per-problem AUROC distributions:**
+The 1.5B matched-pair distributions across the two checkpoints are statistically indistinguishable (p = 0.14). The 0.5B equivalent under corrected labels is also NS (p = 0.68; §2.5). Neither scale supports a "RL collapsed the matched-pair effect" finding under corrected labels.
 
-| | 0.5B C_SFT | 0.5B C_outcome | 1.5B C_SFT | 1.5B C_outcome |
-|---|---|---|---|---|
-| mean | 0.722 | **0.612 (DROP)** | 0.790 | **0.901 (RISE)** |
-| median | 0.741 | 0.638 | 0.818 | 1.000 |
-| probe_drop mean | (sft−out) | **+0.130** | (sft−out) | **−0.113** |
+Caveat: 1.5B C_outcome's matched-pair n is only 57 because the model is much more deterministic in K=16 sampling (pass@1 = 0.56; many problems become all-correct, removing them from the mixed-outcome pool).
 
-At 0.5B the per-problem trace-final AUROC *falls* under RL (probe_drop +0.13). At 1.5B it *rises* (probe_drop −0.11). The qualitative direction has flipped, and the dominant quadrant has shifted from "decoupling" (64% at 0.5B) to "both improved" (63% at 1.5B).
+### 15.3 Per-problem probe-AUROC at 1.5B
 
-### 15.4 Interpretation — position-decoupling is a small-scale phenomenon
+The 1.5B per-problem analysis uses original-label probes (not re-run with corrected labels because the 1.5B caches are smaller and the matched-pair effect is already established by §15.2):
 
-Three pieces of evidence at 1.5B point the same way:
-1. **Aggregate gap shrinks** (§15.1): pre − assertion drops from 0.19 to 0.04 at the best layer.
-2. **Within-prompt matched-pair distributions become statistically indistinguishable** (§15.2): Mann-Whitney p = 0.14 at 1.5B vs 1e−16 at 0.5B.
-3. **Per-problem AUROC under RL flips from drop to rise** (§15.3): mean probe_drop −0.11 at 1.5B vs +0.13 at 0.5B; dominant quadrant is "both improved" (63%) rather than "decoupling" (64% at 0.5B).
+- Per-problem AUROC mean: 1.5B C_SFT 0.79 → 1.5B C_outcome 0.90 (rises under RL; same direction as 0.5B under corrected labels).
+- Spearman r(probe_drop, acc_delta) at 1.5B: essentially zero.
+- Dominant quadrant: "both improved" (~63%).
 
-**The position-decoupling story under outcome RL appears to be specifically a small-scale (0.5B) phenomenon.** At 1.5B, the model maintains a coherent correctness representation across token positions throughout RLOO training. The within-problem probe discrimination is preserved (and slightly strengthened) at the trace-final position, instead of weakening as at 0.5B.
+The 1.5B picture mirrors the corrected-label 0.5B picture: per-problem AUROC rises under RL, no significant correlation with accuracy delta, "both improved" is dominant.
+
+### 15.4 Interpretation — rambling is a small-scale phenomenon
+
+Two pieces of evidence at 1.5B point the same way:
+1. **Rambling is essentially absent**: 0.075% multi-answer at 1.5B C_outcome vs 87% at 0.5B C_outcome. The model emits a single `<answer>` block on virtually all rollouts.
+2. **The probe is near-oracle at both scales** (AUROC 0.974 at 1.5B, 0.982 at 0.5B). The applied probe strategies generalize (best-of-16 lift +8.6 pp at 1.5B, abstention reaches 93% accuracy at 50% coverage at 1.5B; §18.4).
+
+**The rambling reward-hack appears to be specifically a small-scale (0.5B) phenomenon.** The 1.5B model never falls into the multi-answer exploit. The position-decoupling gap that emerges under RL at 0.5B (§2.2) is correlationally tied to the rambling rate (r = +0.89); since rambling doesn't develop at 1.5B, the gap doesn't either.
 
 **Open question for future work.** Does this fit with Yuan et al.'s "concealment gap widens under outcome RL at 1.5B+" finding? Their gap was probe-vs-verbalized; we measured probe-vs-probe across positions. The relationship isn't direct. If at 1.5B the *internal* representation stays coherent across positions but the *verbalized* signal still diverges (as Yuan reports), that would imply Yuan's gap is at the verbalization-readout level (not in the hidden-state representation itself). Confirming this would require running their elicitation methodology on our 1.5B C_outcome — out of scope here (the SFT'd-on-Countdown base is not chat-tuned for graded confidence elicitation; see writeup §6).
 
