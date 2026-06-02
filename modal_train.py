@@ -221,6 +221,21 @@ def run_firstanswer_rloo(trainer_args: list[str]) -> str:
     volumes={str(REMOTE_VOLUME_ROOT): TRAINING_VOLUME},
     secrets=_build_secret_list(),
 )
+def run_ramble_penalty_rloo(trainer_args: list[str]) -> str:
+    # RLOO with first-block reward + per-extra-block ramble penalty. Tests
+    # whether rambling is load-bearing for accuracy or just SFT inertia.
+    return _run_training("extension/training/ramble_penalty_rloo.py", trainer_args)
+
+
+@app.function(
+    image=base_image,
+    gpu=GPU_CONFIG,
+    cpu=CPU_COUNT,
+    timeout=TIMEOUT_SECONDS,
+    startup_timeout=STARTUP_TIMEOUT_SECONDS,
+    volumes={str(REMOTE_VOLUME_ROOT): TRAINING_VOLUME},
+    secrets=_build_secret_list(),
+)
 def run_eval(eval_args: list[str]) -> str:
     return _run_eval(eval_args)
 
@@ -372,7 +387,7 @@ def _build_parser() -> argparse.ArgumentParser:
             "probe_cache", "elicit_confidence", "token_logprob_confidence",
             "sample_local", "cache_answers", "causal_steering",
             "probe_behavioral", "train_answer_probe",
-            "cache_all_thinkclose", "firstanswer_rloo", "probe_rloo",
+            "cache_all_thinkclose", "firstanswer_rloo", "probe_rloo", "ramble_penalty_rloo",
         ),
     )
     parser.add_argument(
@@ -423,6 +438,8 @@ def main(*raw_args: str) -> None:
         call = run_firstanswer_rloo.spawn(trainer_args)
     elif args.trainer == "probe_rloo":
         call = run_probe_rloo.spawn(trainer_args)
+    elif args.trainer == "ramble_penalty_rloo":
+        call = run_ramble_penalty_rloo.spawn(trainer_args)
     else:
         call = run_rloo.spawn(trainer_args)
 
