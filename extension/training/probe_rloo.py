@@ -110,25 +110,32 @@ def _install_probe_reward(probe_pkl_path: str, hybrid: bool, layer: int) -> None
     # worker has produced rollouts, so we know the latest_checkpoint exists).
     state = {"model": None, "tokenizer": None, "checkpoint_path": None, "device": "cuda" if torch.cuda.is_available() else "cpu"}
 
-    LATEST = "/vol/checkpoints/rloo_probe_checkpoints/rloo_probe_0.5b/probe_rloo_run1/latest_checkpoint/model"
+    def _find_latest_checkpoint():
+        """Find the most recently modified latest_checkpoint under any probe_rloo
+        run dir (auto-detects the current run rather than hardcoding the name)."""
+        import glob
+        candidates = glob.glob("/vol/checkpoints/rloo_probe_checkpoints/*/*/latest_checkpoint/model")
+        if not candidates:
+            return None
+        return max(candidates, key=lambda p: os.path.getmtime(p))
 
     def _ensure_reference_model():
-        # If the latest checkpoint changed, reload.
-        if not os.path.exists(LATEST):
+        latest = _find_latest_checkpoint()
+        if latest is None:
             return False  # no checkpoint yet (step 0 sample uses init weights)
-        # Check mtime; reload if newer
-        latest_mtime = os.path.getmtime(LATEST)
-        if state["model"] is None or state.get("loaded_mtime", 0) < latest_mtime:
-            print(f"[probe_rloo] (re)loading reference model from {LATEST} (mtime={latest_mtime})", flush=True)
+        latest_mtime = os.path.getmtime(latest)
+        if state["model"] is None or state.get("loaded_mtime", 0) < latest_mtime or state.get("loaded_from") != latest:
+            print(f"[probe_rloo] (re)loading reference model from {latest} (mtime={latest_mtime})", flush=True)
             if state["model"] is not None:
                 del state["model"]
                 if torch.cuda.is_available():
                     torch.cuda.empty_cache()
-            state["model"] = AutoModelForCausalLM.from_pretrained(LATEST, torch_dtype=torch.bfloat16).to(state["device"])
+            state["model"] = AutoModelForCausalLM.from_pretrained(latest, torch_dtype=torch.bfloat16).to(state["device"])
             state["model"].eval()
             if state["tokenizer"] is None:
-                state["tokenizer"] = AutoTokenizer.from_pretrained(LATEST)
+                state["tokenizer"] = AutoTokenizer.from_pretrained(latest)
             state["loaded_mtime"] = latest_mtime
+            state["loaded_from"] = latest
         return True
 
     def _init_reference_from(model_path: str):
