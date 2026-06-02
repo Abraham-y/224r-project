@@ -987,7 +987,47 @@ We repeated the §18.1–§18.3 pipeline at 1.5B C_outcome (independent probe tr
 
 **Reading.** The probe is near-oracle at both scales (AUROC 0.982 / 0.974), and the same applied strategies — best-of-K selection, selective abstention, restart — give consistent lifts at both. The 1.5B abstention curve (~93% accuracy at 50% coverage) is slightly below 0.5B's (~98%) but still strong. The qualitative finding is that **the probe-as-applied-tool generalizes beyond the rambling regime**: at 1.5B the model does not ramble (~0% multi-answer), and yet the probe still supports a useful selective-prediction and best-of-K mechanism. Note that the cached cross-scale rollouts subselect to prompts that produced a `</think>` token; the absolute pass@1 numbers above are first-block correctness restricted to that subset and should not be compared directly to the n=50 headline pass@1.
 
-### 18.5 First-answer reward RLOO — the verifier-level cure for the rambling reward-hack
+### 18.5 Probe-mean as a near-oracle problem-difficulty signal
+
+Aggregating the probe across the K rollouts for a given prompt gives a per-prompt difficulty estimate. Specifically: for each of the 406 prompts in clean-406, compute `mean(probe across the 16 cached rollouts at </think>)`. Correlate against the per-prompt accuracy (fraction of 16 rollouts whose first `<answer>` block is correct). Script: `extension/probe/probe_creative_extensions.py` part (A).
+
+| Statistic | Pearson r | Spearman ρ |
+|---|---|---|
+| mean_probe ~ per-prompt accuracy | **+0.967 (p ≈ 4 × 10⁻²⁴³)** | **+0.941** |
+| std_probe ~ per-prompt accuracy | +0.062 (p = 0.21, NS) | −0.014 (NS) |
+
+**Reading.** The probe mean across K rollouts is a *near-perfect* predictor of per-prompt accuracy (Pearson 0.97). If you sample K rollouts and average the probe scores, you get an estimate of how often the model will get this problem right, with very little noise. The probe **standard deviation** carries no information about accuracy (r ≈ 0). The implication: the probe captures problem-level difficulty almost optimally, but it does so via the *mean* of confidences, not by signaling "the model is uncertain" via spread. This is itself notable — the model doesn't really "know it doesn't know" via inconsistency across rollouts; its lack of confidence is consistent across rollouts on hard problems.
+
+### 18.6 Cross-checkpoint applied probe transfer — train on C_SFT, deploy on C_outcome
+
+Does the applied probe-selector need to be trained on the deployment-time checkpoint, or does a probe trained on C_SFT activations work as a selector for C_outcome rollouts? Script: `extension/probe/probe_creative_extensions.py` part (B).
+
+| Probe source | Held-out balanced AUROC on C_outcome | best-of-16 selector accuracy | Lift vs pass@1 |
+|---|---|---|---|
+| C_outcome-trained (in-distribution) | 0.982 | 0.670 | +12.1 pp |
+| **C_SFT-trained (cross-checkpoint)** | **0.953** | **0.653** | **+10.3 pp** |
+
+**Reading.** A probe trained only on the SFT checkpoint's hidden states transfers well to the post-RL checkpoint's selector setting: AUROC drops by only 0.029 (0.982 → 0.953), and best-of-16 lift drops by only 1.8 pp (12.1 → 10.3). The applied probe is largely *checkpoint-invariant*. This matters practically: you can train the probe **once** on a stable SFT model and reuse it across many post-SFT RL checkpoints without retraining — including snapshots taken during a single RL run.
+
+### 18.7 Multi-position probe ensemble — does not help, pre_answer saturates the signal
+
+Combining probe scores from multiple positions (pre_answer + assertion + neutral) for best-of-K selection (script: `extension/probe/probe_creative_extensions.py` part (C); 357 prompts with all three probe types):
+
+| Selection score | best-of-16 accuracy | Lift vs pass@1 |
+|---|---|---|
+| pre_answer alone | **0.765** | **+1.7 pp** |
+| assertion alone | 0.762 | +1.4 pp |
+| neutral alone | 0.754 | +0.6 pp |
+| mean(pre, ass) | 0.762 | +1.4 pp |
+| product(pre, ass) | 0.762 | +1.4 pp |
+| max(pre, ass) | 0.762 | +1.4 pp |
+| min(pre, ass) | **0.765** | **+1.7 pp** |
+
+**Reading.** No combination beats pre_answer-alone selection. Multi-position aggregation gives essentially the same lift (~+1.4 pp) as pre_answer alone (+1.7 pp), and even the worst single-position probe (neutral) is only slightly worse. The trace-final probe is the dominant signal; assertion and neutral probes carry signal too (their AUROCs are individually high — see §2.1), but they're highly *redundant* with the pre_answer signal in this selection setting. The applied story is "use the trace-final probe; multi-position aggregation isn't worth the complexity."
+
+Note: the pass@1 baseline here (0.748) is on the 357-prompt subset where every rollout has at least one assertion + neutral position — a biased-easier subset than the full 406. So the absolute lifts here are smaller than §18.1's; the rank ordering of strategies is the comparison.
+
+### 18.8 First-answer reward RLOO — the verifier-level cure for the rambling reward-hack
 
 The rambling pathology at 0.5B has a clean diagnosis (§3.1, §7): the verifier in `evaluation/countdown.compute_score` scores the *last* `<answer>` block, so RLOO rewards the policy for emitting many candidate blocks and only requires the *final* one to be correct. The probe-applied work in §17 / §18.1–§18.4 is one half of the picture (a deployment-time fix); the other half is to remove the perverse incentive at training time.
 

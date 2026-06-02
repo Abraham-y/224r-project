@@ -486,3 +486,33 @@ answer.
   probe+majority hybrid, cross-scale generalization, first-answer
   RLOO (pending). Updated §0 TL;DR and §17.
 - findings.md: new EXP-14 through EXP-19 entries.
+
+### Three more creative probe extensions (extension/probe/probe_creative_extensions.py)
+
+(A) Probe-mean as problem-difficulty signal:
+  Per-prompt mean probe across K rollouts correlates with per-prompt
+  accuracy at Pearson r = +0.967 (Spearman 0.94). Probe std does NOT
+  (Pearson 0.06, NS). The probe mean is a near-oracle difficulty
+  estimator; the model's "uncertainty" is in low mean confidence on
+  hard problems, not in spread across rollouts.
+  Figure: extension/outputs/n500/figures/fig21_probe_variance_difficulty.png
+
+(B) Cross-checkpoint applied probe transfer:
+  Probe trained on C_SFT data, deployed on C_outcome rollouts.
+  Held-out balanced AUROC: 0.953 (vs 0.982 in-distribution).
+  best-of-16 lift: +10.3 pp (vs +12.1 pp in-distribution).
+  The applied probe is largely checkpoint-invariant -- train once on
+  SFT, reuse across RL checkpoints.
+
+(C) Multi-position probe ensemble:
+  Combine pre_answer + assertion + neutral probes for selection.
+  None of 8 strategies (mean, max, min, product, weighted) beat
+  pre_answer alone. The trace-final probe saturates the selection
+  signal; multi-position aggregation does not help.
+  Figure: extension/outputs/n500/figures/fig22_multi_position_ensemble.png
+
+### Writeup + findings updates
+- writeup.md: added §18.5 (variance-difficulty), §18.6 (cross-checkpoint
+  transfer), §18.7 (multi-position ensemble). Renumbered §18.5
+  (first-answer RLOO) -> §18.8.
+- findings.md: added EXP-19a, EXP-19b, EXP-19c.

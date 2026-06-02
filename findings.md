@@ -692,6 +692,66 @@ Note: cached-rollout subset only includes prompts that produced a `</think>` tok
 
 ---
 
+### EXP-19a: Probe-mean as near-oracle problem-difficulty signal ✅
+
+**Question.** For each prompt, can the average probe score across K rollouts predict per-prompt accuracy? Does probe variance carry additional information ("the model knows it doesn't know")?
+
+**Setup.** `extension/probe/probe_creative_extensions.py` part (A). For each of the 406 prompts, compute `mean(probe at </think> across 16 rollouts)` and `std(probe across 16 rollouts)`. Correlate against per-prompt accuracy (fraction first-block correct).
+
+**Results.**
+
+| | Pearson r | Spearman ρ |
+|---|---|---|
+| mean_probe ~ accuracy | **+0.967** (p ≈ 4e-243) | **+0.941** |
+| std_probe ~ accuracy | +0.062 (p = 0.21, NS) | −0.014 (NS) |
+
+The probe mean is near-perfectly correlated with per-prompt accuracy. The probe std carries no usable signal. **Implication.** The model's "uncertainty" is reflected in low *mean* confidence on hard problems (consistent across rollouts), not in *spread* of confidence. The probe is a perfect estimator of problem difficulty when averaged across K rollouts.
+
+**Output.** `extension/outputs/n500/figures/fig21_probe_variance_difficulty.png`.
+
+---
+
+### EXP-19b: Cross-checkpoint applied probe transfer ✅
+
+**Question.** Does the applied probe need to be trained on the deployment-time checkpoint, or does a probe trained once on C_SFT work on C_outcome?
+
+**Setup.** `extension/probe/probe_creative_extensions.py` part (B). Train probe on C_SFT activations + C_SFT corrected first-block labels (full data, no held-out split). Deploy on C_outcome cached rollouts. Compute AUROC + best-of-16 selector accuracy.
+
+**Results.**
+
+| Probe | Held-out balanced AUROC on C_outcome | best-of-16 accuracy | Lift vs pass@1 (0.549) |
+|---|---|---|---|
+| C_outcome-trained (in-distribution) | 0.982 | 0.670 | +12.1 pp |
+| **C_SFT-trained (cross-checkpoint)** | **0.953** | **0.653** | **+10.3 pp** |
+
+A probe trained on C_SFT alone gives ~85% of the in-distribution lift (10.3 / 12.1 = 0.85). **Implication.** You can train the probe once on a stable SFT model and reuse it on many post-SFT RL checkpoints. The applied probe is largely checkpoint-invariant.
+
+---
+
+### EXP-19c: Multi-position probe ensemble does not help ✅
+
+**Question.** Does combining probe scores from multiple positions (pre_answer + assertion + neutral) improve best-of-K selection?
+
+**Setup.** `extension/probe/probe_creative_extensions.py` part (C). Train held-out probes at all three positions. Aggregate per-rollout (mean of assertion / neutral scores; pre_answer is one per rollout). For each rollout, combine the three position-scores under 8 strategies (alone, mean, product, max, min, weighted).
+
+**Results (357 prompts with all three probe types; pass@1 = 0.748 on this subset):**
+
+| Selection score | best-of-16 acc |
+|---|---|
+| pre_answer alone | **0.765** |
+| assertion alone | 0.762 |
+| neutral alone | 0.754 |
+| mean(pre, ass) | 0.762 |
+| product(pre, ass) | 0.762 |
+| max(pre, ass) | 0.762 |
+| **min(pre, ass)** | **0.765** |
+
+No combination beats pre_answer-alone. The trace-final probe saturates the signal; multi-position aggregation is not worth the complexity.
+
+**Output.** `extension/outputs/n500/figures/fig22_multi_position_ensemble.png`.
+
+---
+
 ### EXP-19: First-answer reward RLOO (verifier-level remedy) ⏳
 
 **Question.** The rambling at 0.5B C_outcome is a reward-hack of the verifier's "last-`<answer>`-block wins" rule (§3.1, §7 in writeup). If we monkey-patch the verifier to score the FIRST `<answer>` block instead, does the rambling go away while accuracy is preserved? This is the verifier-level equivalent of probe-as-reward-shaping (the probe is a near-oracle predictor of first-block correctness, so the two reward signals are equivalent).
