@@ -151,7 +151,7 @@ def _install_probe_reward(probe_pkl_path: str, hybrid: bool, layer: int) -> None
             state["model"] = AutoModelForCausalLM.from_pretrained(target, torch_dtype=torch.bfloat16).to(state["device"])
             state["model"].eval()
             if state["tokenizer"] is None:
-                state["tokenizer"] = AutoTokenizer.from_pretrained(target)
+                state["tokenizer"] = AutoTokenizer.from_pretrained(target, use_fast=True)
             state["loaded_mtime"] = target_mtime
             state["loaded_from"] = target
         return True
