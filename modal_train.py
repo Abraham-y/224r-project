@@ -190,6 +190,21 @@ def run_rloo(trainer_args: list[str]) -> str:
     volumes={str(REMOTE_VOLUME_ROOT): TRAINING_VOLUME},
     secrets=_build_secret_list(),
 )
+def run_probe_rloo(trainer_args: list[str]) -> str:
+    # RLOO with linear probe as the reward signal (instead of the verifier).
+    # See extension/training/probe_rloo.py docstring for details.
+    return _run_training("extension/training/probe_rloo.py", trainer_args)
+
+
+@app.function(
+    image=base_image,
+    gpu=GPU_CONFIG,
+    cpu=CPU_COUNT,
+    timeout=TIMEOUT_SECONDS,
+    startup_timeout=STARTUP_TIMEOUT_SECONDS,
+    volumes={str(REMOTE_VOLUME_ROOT): TRAINING_VOLUME},
+    secrets=_build_secret_list(),
+)
 def run_firstanswer_rloo(trainer_args: list[str]) -> str:
     # RLOO where the verifier scores the FIRST <answer> block instead of the
     # last. Text-based equivalent of probe-as-reward-shaping (the trace-final
@@ -357,7 +372,7 @@ def _build_parser() -> argparse.ArgumentParser:
             "probe_cache", "elicit_confidence", "token_logprob_confidence",
             "sample_local", "cache_answers", "causal_steering",
             "probe_behavioral", "train_answer_probe",
-            "cache_all_thinkclose", "firstanswer_rloo",
+            "cache_all_thinkclose", "firstanswer_rloo", "probe_rloo",
         ),
     )
     parser.add_argument(
@@ -406,6 +421,8 @@ def main(*raw_args: str) -> None:
         call = run_cache_all_thinkclose.spawn(trainer_args)
     elif args.trainer == "firstanswer_rloo":
         call = run_firstanswer_rloo.spawn(trainer_args)
+    elif args.trainer == "probe_rloo":
+        call = run_probe_rloo.spawn(trainer_args)
     else:
         call = run_rloo.spawn(trainer_args)
 
