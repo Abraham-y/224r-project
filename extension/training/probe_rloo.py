@@ -148,13 +148,20 @@ def _install_probe_reward(probe_pkl_path: str, hybrid: bool, layer: int) -> None
         state["tokenizer"] = AutoTokenizer.from_pretrained(model_path)
         state["loaded_mtime"] = 0.0  # forces reload from disk once latest_checkpoint appears
 
-    # Initial reference model: C_outcome (where the probe was trained).
-    # The probe sees its training distribution at step 0; as the policy
-    # updates each round, we reload from the latest_checkpoint.
-    init_path = os.environ.get(
-        "PROBE_RLOO_INIT_MODEL",
-        "/vol/checkpoints/rloo_checkpoints/rloo_training/rloo_fixed_v2/latest_checkpoint/model",
-    )
+    # Initial reference model: read --model_name from sys.argv so the
+    # reference matches the policy at step 0. If the policy starts from C_SFT,
+    # reference is C_SFT; if from C_outcome, reference is C_outcome.
+    # As training progresses, _ensure_reference_model() picks up latest_checkpoint.
+    init_path = os.environ.get("PROBE_RLOO_INIT_MODEL")
+    if init_path is None:
+        # Parse --model_name from argv (it stays in argv because main passes it to rloo.py)
+        for i, tok in enumerate(sys.argv):
+            if tok == "--model_name" and i + 1 < len(sys.argv):
+                init_path = sys.argv[i + 1]
+                break
+    if init_path is None:
+        init_path = "asingh15/qwen-sft-countdown-defaultproj"
+    print(f"[probe_rloo] reference model init from --model_name: {init_path}", flush=True)
     try:
         _init_reference_from(init_path)
     except Exception as e:
