@@ -774,6 +774,42 @@ At K_avg=4, adaptive allocation matches the full-budget K=16 uniform accuracy wi
 
 ---
 
+### EXP-19e: Probe-as-verifier-free-eval + failure-mode diagnostic ✅
+
+**Question.** Can the probe serve as a free dataset-accuracy estimator (no verifier needed)? When it makes mistakes, what do those look like?
+
+**Setup.** `extension/probe/probe_as_eval_proxy.py`. Per-prompt: take mean probe across 16 rollouts; average across prompts. Compare to true verifier accuracy. Bin rollouts into TP/TN/FP/FN by (probe ≥ 0.5) × (first-block correct).
+
+**Results — eval-proxy:**
+
+| | Value |
+|---|---|
+| True dataset accuracy | 0.5531 |
+| Probe-mean estimate | **0.5565** (diff +0.0035) |
+| Probe-vote estimate | 0.5985 (diff +0.0455) |
+
+Probe-mean gives a near-exact estimate of true dataset accuracy. Useful as a verifier substitute in deployment.
+
+**Results — failure modes (n=6306 rollouts):**
+
+| Class | n | mean blocks | mean probe |
+|---|---|---|---|
+| TP | 3485 | 9.7 | 0.960 |
+| TN | 2534 | 3.1 | 0.028 |
+| **FP (overconf)** | 197 | 9.5 | 0.809 |
+| **FN (underconf)** | 90 | 6.8 | 0.207 |
+
+| Calibration | Rate |
+|---|---|
+| Overconfidence: P(wrong \| probe≥0.5) | **5.4%** |
+| Underconfidence: P(correct \| probe<0.5) | **3.4%** |
+
+Probe is extremely well-calibrated. Overconfidence cases have the same rambling profile as correct ones — they're confidently-rambling-to-wrong-answer pathologies, the natural floor for any near-oracle predictor.
+
+**Output.** `extension/outputs/n500/figures/fig24_probe_eval_proxy.png`.
+
+---
+
 ### EXP-19: First-answer reward RLOO (verifier-level remedy) ⏳
 
 **Question.** The rambling at 0.5B C_outcome is a reward-hack of the verifier's "last-`<answer>`-block wins" rule (§3.1, §7 in writeup). If we monkey-patch the verifier to score the FIRST `<answer>` block instead, does the rambling go away while accuracy is preserved? This is the verifier-level equivalent of probe-as-reward-shaping (the probe is a near-oracle predictor of first-block correctness, so the two reward signals are equivalent).

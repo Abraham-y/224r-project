@@ -531,3 +531,20 @@ answer.
 - writeup.md: added §18.8 (adaptive budget). Renumbered first-answer
   RLOO to §18.9.
 - findings.md: added EXP-19d.
+
+### Probe-as-verifier-free-eval + failure-mode diagnostic (extension/probe/probe_as_eval_proxy.py)
+- Dataset-level accuracy estimate from probe (no verifier):
+    True: 0.5531; Probe-mean estimate: 0.5565 (diff +0.0035).
+    Near-exact. Useful as a verifier substitute in deployment.
+- Failure modes of the probe (n=6306 rollouts):
+    Overconfidence (probe>=0.5 & wrong): 197 / 3682 = 5.4%
+    Underconfidence (probe<0.5 & correct): 90 / 2624 = 3.4%
+  Overconfidence cases have same block count (9.5) as correct ones --
+  they're confidently-rambling-to-wrong-answer pathologies. Natural
+  floor for any near-oracle predictor.
+- Figure: extension/outputs/n500/figures/fig24_probe_eval_proxy.png
+
+### Writeup + findings updates
+- writeup.md §18.9 added (eval-proxy + failure modes). First-answer RLOO
+  now §18.10.
+- findings.md: EXP-19e added.

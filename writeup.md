@@ -1051,7 +1051,41 @@ Given a fixed total budget of B rollouts across N prompts, should you spend them
 
 Figure: `extension/outputs/n500/figures/fig23_probe_adaptive_budget.png`.
 
-### 18.9 First-answer reward RLOO — the verifier-level cure for the rambling reward-hack
+### 18.9 Probe-as-verifier-free-eval and failure-mode diagnostic
+
+If the probe is near-oracle at predicting first-block correctness, can we use it as a *verifier replacement* for dataset-level accuracy estimation? And: when the probe makes mistakes, what do those mistakes look like? Script: `extension/probe/probe_as_eval_proxy.py`.
+
+**(D) Probe-as-eval-proxy.** For each prompt, take mean probe at `</think>` across 16 rollouts. Average across all 406 prompts.
+
+| Quantity | Value |
+|---|---|
+| True dataset accuracy (verifier on clean-406) | 0.5531 |
+| **Probe-mean estimate (no verifier)** | **0.5565** |
+| Probe-vote estimate (per-prompt mean ≥ 0.5) | 0.5985 |
+
+Probe-mean is off by **0.0035** from the verifier's number — essentially exact. This is useful in deployment settings where ground truth is expensive (LLM-judge tasks, open-ended generation): the probe gives a calibrated dataset-level accuracy estimate without any verifier calls. The probe-vote variant overestimates because the probe's positive-class threshold doesn't quite match the natural 50% accuracy threshold; the continuous probe-mean is the better proxy.
+
+**(E) Failure-mode diagnostic.** Of 6306 rollouts on clean-406:
+
+| Class | n | Mean blocks/rollout | Mean probe |
+|---|---|---|---|
+| TP (probe ≥ 0.5, correct) | 3485 | 9.7 | 0.960 |
+| TN (probe < 0.5, wrong) | 2534 | 3.1 | 0.028 |
+| **FP (probe ≥ 0.5, wrong) — overconfidence** | **197** | **9.5** | 0.809 |
+| **FN (probe < 0.5, correct) — underconfidence** | **90** | **6.8** | 0.207 |
+
+| Calibration metric | Rate |
+|---|---|
+| P(wrong \| probe ≥ 0.5) — overconfidence rate | **5.4%** |
+| P(correct \| probe < 0.5) — underconfidence rate | **3.4%** |
+
+**Reading.** The probe is extremely well-calibrated: only 5.4% of "confident" rollouts are wrong, and only 3.4% of "unconfident" rollouts are correct. The 197 FP overconfidence cases are interesting: they have the same block-count profile (9.5 blocks) as TP correct rollouts (9.7 blocks), and their probe scores are still high (0.809) but not maxed out (vs 0.960 for TPs). These are problems where the model rambles confidently to a wrong answer — i.e., the rambling pathology occasionally produces convincing-looking-but-incorrect first answers that even the probe falls for. The 90 FN underconfidence cases ramble less (6.8 blocks); they're rollouts where the first answer happens to be correct but the model's internal state at `</think>` doesn't strongly endorse it.
+
+These are the natural error modes of any near-oracle calibrated predictor at scale, and they bound the practical ceiling of probe-based selection at the floor "~5% overconfidence × your selection threshold" rate.
+
+Figure: `extension/outputs/n500/figures/fig24_probe_eval_proxy.png`.
+
+### 18.10 First-answer reward RLOO — the verifier-level cure for the rambling reward-hack
 
 The rambling pathology at 0.5B has a clean diagnosis (§3.1, §7): the verifier in `evaluation/countdown.compute_score` scores the *last* `<answer>` block, so RLOO rewards the policy for emitting many candidate blocks and only requires the *final* one to be correct. The probe-applied work in §17 / §18.1–§18.4 is one half of the picture (a deployment-time fix); the other half is to remove the perverse incentive at training time.
 
