@@ -516,3 +516,18 @@ answer.
   transfer), §18.7 (multi-position ensemble). Renumbered §18.5
   (first-answer RLOO) -> §18.8.
 - findings.md: added EXP-19a, EXP-19b, EXP-19c.
+
+### Probe-adaptive test-time budget allocation (extension/probe/probe_adaptive_budget.py)
+- At K_avg=4 rollouts/prompt, adaptive (threshold-waterfill T=0.95)
+  matches full K=16 uniform accuracy: 0.830 vs 0.823. Same accuracy
+  at 1/4 the compute.
+- Lift vs uniform at same K_avg: +2.4 pp at K_avg=4, +2.1 pp at K_avg=6/8.
+- Mechanism: round 1 + adaptive uses probe-after-first-rollout to
+  decide which prompts get more compute. Easy prompts stop at 1-3
+  rollouts; ~43 hard prompts (of 288) get pushed to all 16.
+- Figure: extension/outputs/n500/figures/fig23_probe_adaptive_budget.png
+
+### Writeup + findings updates
+- writeup.md: added §18.8 (adaptive budget). Renumbered first-answer
+  RLOO to §18.9.
+- findings.md: added EXP-19d.
