@@ -10,6 +10,7 @@ clean dir.
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import shutil
@@ -20,9 +21,17 @@ import numpy as np
 
 
 def main():
-    src = Path("extension/cache/probe_cache_n500")
-    dst = Path("extension/cache/probe_cache_n500_clean406")
-    contam_path = Path("extension/data/contaminated_prompt_idx.json")
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--src_dir", default="extension/cache/probe_cache_n500",
+                    help="Source cache directory (output of cache_hidden_states.py).")
+    ap.add_argument("--dst_dir", default="extension/cache/probe_cache_n500_clean406",
+                    help="Filtered output cache directory.")
+    ap.add_argument("--contam_path", default="extension/data/contaminated_prompt_idx.json")
+    args = ap.parse_args()
+
+    src = Path(args.src_dir)
+    dst = Path(args.dst_dir)
+    contam_path = Path(args.contam_path)
 
     if not src.exists():
         print(f"missing {src}", file=sys.stderr); sys.exit(1)
