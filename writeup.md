@@ -9,7 +9,7 @@
 
 ## 0. TL;DR (one-paragraph)
 
-**A near-oracle internal verifier emerges at the trace-final position under outcome RL, with substantial applied value at deployment time.** On Countdown (an exact-verifier task), the trace-final probe at `</think>` is **near-oracle** at predicting first-`<answer>`-block correctness — held-out AUROC **0.982** at 0.5B C_outcome and **0.974** at 1.5B C_outcome (corrected next-block-correctness labels throughout). Outcome RL *strengthens* the probe at every level we measure: aggregate (C_SFT 0.912 → C_outcome 0.982), per-problem (mean 0.882 → 0.927), and within-prompt matched-pair (Wilcoxon p < 1e-7 on both checkpoints, indistinguishable between them: MW p = 0.68). Within multi-answer rollouts, the model truly updates its belief at each commit (Pattern A: probe(last) on T→F drift rollouts = 0.154, matches the F→F floor 0.088 — no preserved "secret correct" representation; bidirectional in F→T rescues). Causal steering along the probe direction is null (probe-vs-random Δ ∈ [−0.07, +0.02]; the probe is a *reader*, not a *controller*, of a multi-dimensional correctness subspace). **Applied results** (deployment-time uses of the probe, all corrected labels): probe-as-answer-selector at 0.5B = +8.7 pp; best-of-16 selector = +12.1 pp; probe-guided budgeted restart matches best-of-16 at 60% less compute; selective abstention reaches 98% accuracy at 50% coverage and 99% at 33%; adaptive budget gives +2.4 pp at K_avg=4; probe-mean estimates dataset accuracy to ±0.4 pp; calibration is 5.4% overconfidence, 3.4% underconfidence. **Probe-as-RL-reward catastrophically Goodharts in both init regimes** (C_outcome init: delayed Goodhart, accuracy −25 pp from baseline; C_SFT init: immediate Goodhart, final accuracy below SFT starting point); the policy exploits structural confounds the probe was correlated with in its training distribution, and post-Goodhart causal steering shows the probe direction became mildly causal (Δ=+0.08 vs original null). At 0.5B C_outcome the model rambles (87% multi-answer rollouts; mean 7.6 `<answer>` blocks); the position-gap of +0.086 between pre_answer and assertion probes correlates with the rambling rate at r=+0.89 across snapshots. **Causal tests of the rambling-as-reward-hack hypothesis (first-answer-reward RLOO and ramble-penalty RLOO) were CONFOUNDED by the vLLM sampling worker's `stop=["</answer>"]` flag**, which forces every training rollout to have exactly one `<answer>` block — making all three reward functions (vanilla last-block, first-block, first-block-minus-extra-block-penalty) collapse to the same signal at training time. **The rambling-as-reward-hack hypothesis is therefore UNTESTED by this work**; we withdraw the §18.10 null-result claim. The 1.5B model never rambles (0.075% multi-answer) and the position-gap is small (+0.04), giving suggestive but not causal evidence that rambling is small-scale.
+**A near-oracle internal verifier emerges at the trace-final position under outcome RL, with substantial applied value at deployment time.** On Countdown (an exact-verifier task), the trace-final probe at `</think>` is **near-oracle** at predicting first-`<answer>`-block correctness — held-out AUROC **0.982** at 0.5B C_outcome and **0.974** at 1.5B C_outcome (corrected next-block-correctness labels throughout). Outcome RL *strengthens* the probe at every level we measure: aggregate (C_SFT 0.912 → C_outcome 0.982), per-problem (mean 0.882 → 0.927), and within-prompt matched-pair (Wilcoxon p < 1e-7 on both checkpoints, indistinguishable between them: MW p = 0.68). Within multi-answer rollouts, the model truly updates its belief at each commit (Pattern A: probe(last) on T→F drift rollouts = 0.154, matches the F→F floor 0.088 — no preserved "secret correct" representation; bidirectional in F→T rescues). Causal steering along the probe direction is null (probe-vs-random Δ ∈ [−0.07, +0.02]; the probe is a *reader*, not a *controller*, of a multi-dimensional correctness subspace). **Applied results** (deployment-time uses of the probe, all corrected labels): probe-as-answer-selector at 0.5B = +8.7 pp; best-of-16 selector = +12.1 pp; probe-guided budgeted restart matches best-of-16 at 60% less compute; selective abstention reaches 98% accuracy at 50% coverage and 99% at 33%; adaptive budget gives +2.4 pp at K_avg=4; probe-mean estimates dataset accuracy to ±0.4 pp; calibration is 5.4% overconfidence, 3.4% underconfidence. **Probe-as-RL-reward catastrophically Goodharts in both init regimes** (C_outcome init: delayed Goodhart, accuracy −25 pp from baseline; C_SFT init: immediate Goodhart, final accuracy below SFT starting point); the policy exploits structural confounds the probe was correlated with in its training distribution, and post-Goodhart causal steering shows the probe direction became mildly causal (Δ=+0.08 vs original null). **The eval-time "rambling" we previously reported (mean 7.6 `<answer>` blocks at C_outcome, growing to 11.23 under ramble-penalty) is an INFRASTRUCTURE BUG, not a behavioral phenomenon**: a forward-pass logit analysis shows the model wants to emit `<|im_end|>` (token id 151645, end-of-turn) with 97.3% probability immediately after `</answer>`, but `tokenizer.eos_token_id = 151643` (`<|endoftext|>`) and vLLM's default `SamplingParams` stops only on `eos_token_id` — vLLM passes through `<|im_end|>` and continues sampling from an OOD state (the model has never seen text past `<|im_end|>` during training), producing degenerate rambling that *looks* like reward-hacking. Across 8000 rollouts × 6 checkpoints (C_SFT, C_outcome, firstanswer, ramble-penalty λ=0.20, probe-RL runA/B) **zero rollouts ever terminated on EOS**, because the model isn't trying to emit EOS — it's trying to emit `<|im_end|>`. With the eval sampler fixed (`stop_token_ids=[151643, 151645]`), the "rambling pathology" largely disappears at C_outcome (see §20). The §18.10 first-answer-RLOO and EXP-22 ramble-penalty results were already withdrawn as confounded by the training-time `stop=["</answer>"]` in the sampling worker; the eval-time stop bug is a *separate, simpler* confound that further explains why all checkpoints look rambly. **The position-gap (§2.2) and probe results (§2.1–§19) are unaffected** — they were measured on cached activations, not on rambling counts. The 1.5B model "never rambles" (0.075% multi-answer) probably because its tokenizer/sampler config is different and `<|im_end|>` is respected; this remains to verify.
 
 ---
 
@@ -1078,6 +1078,103 @@ What the probe was rewarding is not "correctness" but "structural patterns that 
 The boundary between probe-as-deployment-tool (works great) and probe-as-RL-reward (Goodharts catastrophically) is **whether the policy gets gradient access to the probe's input distribution**. At deployment time, the probe sees naturally-generated activations and gives a meaningful score. At training time, the policy reshapes its activations to maximize the probe's output — and finds that the easiest way is to amplify the structural confounds the probe is calibrated to.
 
 **This bounds the broader applied-probe story** (§17–§18): probes are valuable for selection/abstention/restart at inference but should not be deployed as RL rewards without explicit anchoring (verifier hybrid, periodic probe re-training on the new policy's rollouts, or both).
+
+---
+
+## 20. The rambling pathology is an eval-pipeline bug, not a model behavior
+
+The "rambling" pattern at 0.5B C_outcome (mean 7.6 `<answer>` blocks per rollout; 84% multi-answer) and the *worse* rambling we observed at firstanswer (7.04 blocks), ramble-penalty λ=0.20 (11.23 blocks), and probe-RL runA (15.5 blocks) all turn out to be artifacts of a token-id mismatch between the Qwen2.5 tokenizer's `eos_token_id` and the chat-template end-of-turn token. The model is not gaming a reward; it is being forced past its intended stop signal by the eval sampler.
+
+### 20.1 The mechanism
+
+Qwen2.5 was trained with the chat template that delimits assistant turns with `<|im_end|>` (token id **151645**). The tokenizer config sets:
+
+```
+tokenizer.eos_token = '<|endoftext|>'   (id 151643)
+tokenizer.eos_token_id = 151643
+```
+
+vLLM's `SamplingParams` defaults to stopping on `tokenizer.eos_token_id`. So vLLM stops on 151643 — *not* on the token the model was actually trained to emit at end-of-turn.
+
+A forward-pass on C_SFT shows what the model wants to do at the position immediately following the first `</answer>`:
+
+| Top-5 next-token predictions (3 samples, identical) | Token | ID | Probability |
+|---|---|---|---|
+| 1 | `<|im_end|>` (end-of-turn) | **151645** | **0.973** |
+| 2 | `<|im_start|>` | 151644 | 0.002 |
+| 3 | (garbage non-ASCII) | — | 0.0002 |
+| 4 | (garbage) | — | 0.0001 |
+| 5 | (garbage) | — | 0.0001 |
+
+The model is essentially deterministic — it places **97.3% probability on the end-of-turn token**. There is almost no probability mass on continuing.
+
+But vLLM doesn't recognize `<|im_end|>` as a stop. With `skip_special_tokens=True` (vLLM default), the special token is *stripped from the decoded output*, then the sampler continues. After `<|im_end|>` the model is in an out-of-distribution state (it was never trained to generate past end-of-turn), so the continuation is degenerate — most often `\n<think>Let me verify...`, which then produces another `<answer>` block, and the cycle repeats until `max_tokens=1024` is reached.
+
+### 20.2 The cross-checkpoint signature
+
+We checked the eval JSONs for *any* `<|im_end|>` token in the decoded responses, and for what the text following the first `</answer>` looks like (n=8000 rollouts per checkpoint, n=500 prompts × 16 responses):
+
+| Checkpoint | rollouts ending on EOS | `<\|im_end\|>` in decoded text | continuation pattern |
+|---|---|---|---|
+| C_SFT | 0.0% | 0% | 99.9% `\n<think>Let me verify...` |
+| C_outcome (vanilla) | 0.0% | 0% | 94.8% `\n\n<think>...`, 5.2% direct `<answer>` |
+| firstanswer | 0.0% | 0% | 97.8% `<think>`, 2.2% `<answer>` |
+| ramble-penalty λ=0.20 | 0.0% | 0% | 56.1% `<think>`, 36.7% direct `<answer>` |
+| probe-RL runA | 0.0% | 0% | 57.8% `<think>`, 33.4% direct `<answer>` |
+| probe-RL runB | 0.1% | 0% | 92.6% `<think>`, 1.6% direct `<answer>` |
+
+**Across all six checkpoints, zero rollouts ever stop on EOS.** Not one. The model never wants to emit `<|endoftext|>` — it wants to emit `<|im_end|>` — but vLLM doesn't honor that, and `<|im_end|>` is stripped on decode, so the output has no visible trace of the model trying to stop.
+
+The "rambling" we measured is a deterministic consequence of forcing a model that wants to stop to keep generating. It is not differential reward signal, it is not policy gaming, it is not parameter drift in any meaningful sense — it is the eval pipeline overrunning the model's intent.
+
+### 20.3 The fix
+
+One line in `extension/evaluation/sample_local_jsonl.py`:
+
+```python
+sampling_params = SamplingParams(
+    ...
+    stop_token_ids=[tokenizer.eos_token_id, 151645],  # also stop on <|im_end|>
+)
+```
+
+We re-ran eval on C_outcome and C_SFT with the fixed sampler. (See `eval_c_outcome_FIXEDSTOP_n500.json` and `eval_c_sft_FIXEDSTOP_n500.json`. n = 500 prompts × 16 rollouts = 8000 each, temperature 1.0, max_tokens 1024.)
+
+| Checkpoint | mean blocks (bug) | mean blocks (fixed) | mean chars (bug) | mean chars (fixed) | acc_first (bug) | acc_first (fixed) | acc_last (bug) | acc_last (fixed) |
+|---|---|---|---|---|---|---|---|---|
+| **C_SFT** | 2.83 | **1.04** | 2111 | **1072** | 0.313 | 0.239 | 0.253 | 0.241 |
+| **C_outcome** | 7.41 | **1.83** | 1982 | **1095** | 0.602 | 0.583 | 0.543 | 0.607 |
+
+**Reading.**
+- The "rambling" at C_SFT essentially disappears: mean blocks drops from 2.83 to 1.04 (effectively single-block emission per rollout, matching the 97.3% `<|im_end|>` prediction).
+- At C_outcome, rambling drops by 75% (7.41 → 1.83), but **does not fully collapse to 1.0** — the RL-trained model retains ~17% multi-block emission rate even under proper stopping. This residual rambling IS a real behavioral signal: RL shifted some probability mass away from `<|im_end|>` toward continuation tokens. Whether this is "the real reward-hack we were after" or just KL drift remains an open question for a clean follow-up experiment.
+- At C_outcome under proper stop, `acc_first ≈ acc_last` (0.583 vs 0.607), as expected when most rollouts have one block. The 0.024 gap is the residual contribution from the 17% multi-block rollouts.
+- Caveat: bug-era evals were likely at temperature 0.6, while these fixed evals are at temperature 1.0. The accuracy comparisons are confounded by sampling temperature; the block-count comparisons are not (block count is a structural property at any temperature).
+
+### 20.4 Implications for prior claims
+
+**Unaffected:**
+- Probe AUROCs (§2.1, §2.7, §15) — measured on cached activations, not on rambling counts.
+- Pattern A within-rollout findings (§2.4, §8) — measured on actual emitted blocks; the model genuinely does produce multiple blocks under the buggy sampler, but those blocks are real, parseable, and the model's commit-time representation tracks each one's content. Pattern A holds as a description of "what the model represents at each block it emits" regardless of why it emits them.
+- Causal steering null (§2.11) — bugs in eval don't affect causal interventions at fixed activation positions.
+- Probe-as-RL-reward Goodhart story (§19) — the policy did game the probe via structural confounds in pre-`</think>` reasoning; the post-`</answer>` rambling we documented in runA (15.5 blocks) is partly the same sampler bug, but the dominant gaming mechanism (`/tmp/inspect_high_prob.py` shows the structural-template signature inside `<think>`) is independent of the sampler.
+- Applied probe results (§17, §18.1-§18.9) — these used real per-rollout probe scores; even if the post-`</answer>` extension was bug-induced, the within-rollout probe trajectory is real signal.
+
+**Affected:**
+- The rambling rate / position-gap correlation (r = +0.89 across snapshots, §2.2 / §7). The position-gap (a probe AUROC observation) is real, but the rambling rate it correlates with is largely artifactual. The correlation may still mean *something* (sampler-induced rambling growing under RL is itself a function of the policy's drift), but it is no longer the clean reward-hack signature we framed it as.
+- The "rambling reward-hack" framing throughout the writeup — withdrawn. The §18.10 firstanswer + EXP-22 ramble-penalty experiments were already withdrawn as confounded by the *training-time* stop string in the sampling worker (every training rollout has n_blocks=1, so the three rewards collapse). The *eval-time* `<|im_end|>` bug is an additional, simpler confound that further invalidates rambling as a behavioral target.
+- The "1.5B doesn't ramble" scale claim (§15.4) needs verification. The 1.5B model may use a different tokenizer config in which `<|im_end|>` is the actual `eos_token_id` — in which case vLLM correctly stops, and the "scale-dependence" is just "tokenizer-config-dependence." Not verified before paper submission.
+
+### 20.5 The methodological lesson
+
+Three independent layers of confound were stacked here:
+1. **Training-time stop string** (`stop=["</answer>"]` in `rloo_trainer/sampling_worker.py:84-85`) — collapses all candidate reward functions to "score the first/only block."
+2. **Eval-time eos_token_id mismatch** (`tokenizer.eos_token_id = 151643`, model wants 151645) — fires every rollout past its intended stop into OOD territory.
+3. **`skip_special_tokens=True` decoding** — hides the model's actual stop attempt from any human inspection of the rollout text, making the bug invisible without a forward-pass logit check.
+
+Each layer alone would have been hard to find. Together they produced a story ("model rambles → reward hack → can be fixed by reward shape") that was clean, intuitive, and entirely wrong. The eventual evidence was a single line of forward-pass output: `P(<|im_end|>) = 0.973`.
+
+The lesson is uncomfortable: when a published-style claim depends on a behavioral measurement, **verify that the measurement reflects what the model is *trying* to do**, not just what the sampler reports. A forward-pass argmax check at the relevant position would have caught this in five minutes, before any of the EXP-19 / EXP-22 RL runs were launched.
 
 ---
 

@@ -799,6 +799,104 @@ At α=1.0, probe direction now causally controls accuracy by +8.3 pp over random
 
 ---
 
+### EXP-23: The eval-time `<|im_end|>` discovery — rambling is not behavioral ✅ (this is the real finding)
+
+**Discovery date.** 2026-06-02, after EXP-22 was withdrawn.
+
+**Question.** Why does the model continue past `</answer>` at eval time when there is no training-time pressure for it to? Three competing hypotheses going in:
+- (a) C_SFT-inherited "verify after answering" pattern that RL amplifies
+- (b) Parameter drift on the unobserved post-`</answer>` distribution under RL
+- (c) Some active mechanism we hadn't named
+
+**Method.** Two zero-compute analyses on existing eval JSONs + one local forward pass (~10 min total).
+
+**(i) Post-`</answer>` text classification** on the first emitted `</answer>` in each of 8000 rollouts × 6 checkpoints (`/tmp/post_answer_analysis.py`):
+
+| Checkpoint | rollouts with `</answer>` | EOS after | `<think>` re-entry | direct `<answer>` |
+|---|---|---|---|---|
+| C_SFT | 7233 / 8000 | 2 (0.0%) | 99.9% | 0.0% |
+| C_outcome (vanilla) | 7775 | 2 (0.0%) | 94.8% | 5.2% |
+| firstanswer | 7527 | 1 (0.0%) | 97.8% | 2.2% |
+| ramble-penalty λ=0.20 | 7938 | 2 (0.0%) | 56.1% | 36.7% |
+| probe-RL runA | 7997 | 0 (0.0%) | 57.8% | 33.4% |
+| probe-RL runB | 7947 | 7 (0.1%) | 92.6% | 1.6% |
+
+**Across all checkpoints, the rate of EOS termination after `</answer>` is essentially zero.** Not a single configuration ever stops there. This is suspicious — if the model "decided to continue," we'd expect some spread.
+
+**(ii) Forward-pass logit analysis on C_SFT** (`/tmp/post_answer_logits2.py`, 3 samples shown, identical pattern):
+
+Sample 0 (833 tokens in prompt + body ending in `</answer>`):
+```
+'<|im_end|>'              id=151645  p=0.9731
+'<|im_start|>'            id=151644  p=0.0016
+'所有情节'                    id=117906  p=0.0002
+'iationException'         id=74027   p=0.0001
+'GuidId'                  id=88174   p=0.0001
+```
+
+Sample 1: `<|im_end|>` p=0.9732 (identical second-place). Sample 2: same.
+
+**The model is essentially deterministic: 97.3% probability of emitting `<|im_end|>` (the chat-template end-of-turn token) immediately after `</answer>`.** Everything else is noise.
+
+**(iii) Tokenizer + vLLM config check:**
+
+```
+tokenizer.eos_token_id = 151643  (<|endoftext|>)    ← what vLLM stops on
+<|im_end|> id            = 151645                  ← what the model emits
+```
+
+The Qwen2.5 tokenizer has `eos_token = '<|endoftext|>'`. But the chat template uses `<|im_end|>` to delimit turns. The model was trained on chat-formatted data where assistant turns ALWAYS terminate with `<|im_end|>`. So the model learned: "after `</answer>`, the turn is over — emit `<|im_end|>`."
+
+**vLLM by default stops on `tokenizer.eos_token_id` (151643).** It does NOT stop on `<|im_end|>` (151645). So when the model emits `<|im_end|>`, vLLM passes through it, strips it on decode (with default `skip_special_tokens=True`), and continues sampling from a state the model has never seen during training. That OOD state produces degenerate rambling — most often `\n<think>Let me verify...` (the SFT prior's most likely "continuation given start of new context").
+
+**The result we previously called "rambling" is essentially:**
+- The model emitted `<|im_end|>` (invisible in the decoded text)
+- vLLM ignored it, sampled again
+- Now in OOD territory, the model produces the SFT distribution's most likely "fresh-context" continuation, which contains `<answer>` blocks and the verification pattern
+
+**Implications:**
+
+1. **All "rambling" measurements throughout the writeup are eval-pipeline artifacts**, not behavioral measurements. The rambling rates 7.59 (vanilla), 7.04 (firstanswer), 11.23 (ramble-penalty λ=0.20), 15.55 (probe-RL runA) reflect "how degenerately does the SFT model produce text past `<|im_end|>` under this RL-shaped policy," not "how much the model wants to ramble."
+
+2. **The §2.2 / §7 / §18.10 "rambling tracks position-gap" framings are downstream of the bug.** The position-gap correlation might still hold mechanistically (probe AUROC growth + sampler-induced rambling growth across snapshots) but is not the clean reward-hack signature we framed it as.
+
+3. **The §15 "1.5B doesn't ramble (0.075%)" scale claim** needs verification. The 1.5B Qwen tokenizer may have a different `eos_token_id` setup; this might collapse to "tokenizer-config dependence" rather than a scale phenomenon.
+
+4. **EXP-19 (firstanswer) + EXP-22 (ramble-penalty) confounds compound.** Already withdrawn for the training-time `stop=["</answer>"]` confound; this eval-time bug is an additional layer that further invalidates the "we did/didn't suppress rambling" claims.
+
+**The fix (one line in `extension/evaluation/sample_local_jsonl.py`):**
+```python
+stop_token_ids=[tokenizer.eos_token_id, 151645]  # also stop on <|im_end|>
+```
+
+**Re-eval with fix.** Ran C_SFT and C_outcome with `extra_stop_token_ids=151645` on Modal (16 rollouts × 500 prompts each, temperature 1.0, max_tokens 1024):
+
+| Metric | C_SFT (bug) | C_SFT (fixed) | C_outcome (bug) | C_outcome (fixed) |
+|---|---|---|---|---|
+| mean blocks/rollout | 2.83 | **1.04** | 7.41 | **1.83** |
+| mean chars | 2111 | 1072 | 1982 | 1095 |
+| acc_first | 0.313 | 0.239 | 0.602 | 0.583 |
+| acc_last | 0.253 | 0.241 | 0.543 | 0.607 |
+| pass@16 | ~0.78 | 0.694 | ~0.73 | 0.754 |
+
+**Reading.**
+- C_SFT rambling DROPS TO 1.04 — essentially single-block emission, matching the 97.3% logit mass on `<|im_end|>`.
+- **C_outcome retains ~17% multi-block emission rate** (1.83 blocks) even with proper stops. This is a REAL but much smaller behavioral signal: RL pulled some probability mass away from `<|im_end|>`.
+- Accuracy comparisons confounded by sampling temperature (bug eval likely temp=0.6, fixed eval temp=1.0); the block-count comparison is robust to temperature.
+- The "rambling pathology" as originally framed (mean 7.6 blocks) was overwhelmingly bug-induced. A residual real phenomenon exists (1.83 vs 1.04 baseline) but it's about 1/5 the magnitude.
+
+**Methodological takeaway.** Three stacked confounds (training-time stop string, eval-time eos_token_id mismatch, decode-time `skip_special_tokens=True`) made the rambling story look clean and mechanistically interesting while being entirely wrong. A 5-minute forward-pass argmax check at the relevant token position would have caught the eval-time bug before any of EXP-19 / EXP-22 was launched. This is the unambiguous methodological lesson of the project.
+
+**Outputs.**
+- `/tmp/post_answer_analysis.py` — text-pattern classifier across checkpoints
+- `/tmp/post_answer_logits2.py` — local forward-pass logit analyzer
+- `extension/evaluation/sample_local_jsonl.py` (patched) — `--extra_stop_token_ids` flag added
+- `eval_c_sft_FIXEDSTOP_n500.json`, `eval_c_outcome_FIXEDSTOP_n500.json` — re-eval outputs (on Modal volume)
+
+**Cost.** ~$0 for the discovery (entirely local). ~$5-10 for the two re-eval runs.
+
+---
+
 ### EXP-22: Ramble-penalty RLOO (λ=0.05, λ=0.20) ⚠️ — WITHDRAWN (confounded by training-time stop string)
 
 **Status note.** Same confound as EXP-19. The vLLM sampling worker halts every training rollout at the first `</answer>` (`rloo_trainer/sampling_worker.py:84-85`), so the penalty term `λ × max(0, n_blocks − 1)` is always 0 during training (n_blocks is always 1). The reward reduces to first-block-score, indistinguishable from EXP-19 (firstanswer) and indistinguishable from vanilla on the training distribution. The eval-time differences are seed noise.
@@ -931,6 +1029,13 @@ These metrics look identical to firstanswer (EXP-19) — rollout_accuracy conver
 - **EXP-22 ramble-penalty RLOO results** (λ=0.05 and λ=0.20). WITHDRAWN for the same reason — the penalty term `λ × max(0, n_blocks − 1)` is always 0 on single-block training rollouts.
 - The "rambling is not directly caused by the last-block-scoring rule" causal claim in §18.10 of the writeup. WITHDRAWN.
 - Headline claim 9 (the rambling-reward-hack causal claim) — softened to "correlational only; UNTESTED causally."
+
+### What did NOT survive the eos_token_id mismatch discovery (withdrawn 2026-06-02 — see EXP-23):
+
+- **The "rambling pathology" at 0.5B C_outcome is an eval-pipeline bug, not a behavioral phenomenon.** Forward-pass logits at the post-`</answer>` position show P(`<|im_end|>` id=151645) = **0.973**, but `tokenizer.eos_token_id = 151643` (`<|endoftext|>`). vLLM stops only on 151643, so it passes through `<|im_end|>` and continues sampling from an OOD state. Across 8000 rollouts × 6 checkpoints, ZERO terminated on EOS — the model never wants to emit EOS; it wants to emit `<|im_end|>`.
+- All mean-blocks-per-rollout numbers throughout the writeup (7.59 at C_outcome, 11.23 at ramble-penalty, 15.5 at probe-RL runA, etc.) are bug-induced and should be treated as "what the model produces when forced past its intended stop."
+- The "1.5B never rambles (0.075% multi-answer)" scale claim (§15.4 of the writeup) needs verification — likely a tokenizer-config difference between 0.5B and 1.5B Qwen variants, not a true scale dependence.
+- The §18.10 + EXP-22 confound noted above (training-time `</answer>` stop) is INDEPENDENT of and ADDITIONAL to the eval-time `<|im_end|>` bug. Both must be acknowledged.
 
 ### Pending:
 
