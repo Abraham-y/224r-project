@@ -18,8 +18,8 @@
   citecolor=blue!50!black,
 }
 
-\title{Probing Correctness Representations in Outcome-RL'd Small Language Models:\\
-A Probe-as-Measurement Study with Honest Negative Results}
+\title{Reading vs.\ Writing a Near-Oracle Internal Verifier:\\
+How RL Design Determines Whether a Correctness Probe Is Safe}
 \author{Abraham Yeung \and Anagha Ramaswamy}
 \date{June 2026 \\ Stanford CS 224R Project Report}
 
@@ -27,45 +27,46 @@ A Probe-as-Measurement Study with Honest Negative Results}
 \maketitle
 
 \begin{abstract}
-We train a linear probe at the final-thinking token (\texttt{</think>}) of Qwen2.5-0.5B on Countdown arithmetic and find a \textbf{near-oracle internal verifier}: held-out AUROC 0.982 after outcome RLOO (vs.\ 0.912 at the SFT baseline). Outcome RL strengthens this representation at every level we measure (aggregate, per-problem, within-prompt matched-pair), refuting a small-scale ``knows but doesn't say'' framing. Within multi-answer rollouts, a position-appropriate probe shows that the model's commit-time belief tracks each commit's content, not a hidden first-answer correctness signal. Causal steering along the probe direction is null --- the probe is a \emph{reader}, not a \emph{controller}, of a multi-dimensional correctness subspace. The probe has substantial deployment-time value: best-of-16 selector +12.1\,pp, selective abstention 98\% accuracy at 50\% coverage, probe-guided budgeted restart matches best-of-16 at 60\% less compute, dataset-accuracy estimate within $\pm 0.4$\,pp without verifier calls. \textbf{Using the same probe as an RLOO reward catastrophically Goodharts in both regimes} (in-distribution: delayed Goodhart at step 40, $-25$\,pp accuracy; cross-distribution: immediate Goodhart, $-22$\,pp from the SFT baseline); we trace the gaming to structural stylistic confounds the probe correlated with but did not causally read. The probe direction itself becomes mildly causal post-Goodhart ($\Delta_{\text{probe-vs-random}}=+0.08$ at $\alpha{=}1.0$, materially above the original null). Motivated by this failure mode, we implement \textbf{probe-as-baseline} (the verifier remains the optimization target; the probe enters only as a leave-one-out control variate) as a principled and \emph{stable} way to use the probe in RL --- a working alternative, not a claimed accuracy improvement. The 1.5B reproduction maintains AUROC 0.974 and replicates the applied-probe gains at scale.
+A linear probe at the final-thinking token (\texttt{</think>}) of outcome-RL'd Qwen2.5-0.5B on Countdown arithmetic is \textbf{near-oracle}: held-out AUROC \textbf{0.982} after 100 RLOO steps (vs.\ 0.912 at the SFT baseline), with the result replicating at 1.5B (AUROC 0.974). Outcome RL \emph{strengthens} this representation at every level we measure --- refuting a small-scale ``knows-but-doesn't-say'' framing. Yet the probe is a \emph{reader} of correctness, not a \emph{controller}: causal steering along the probe direction has accuracy effects statistically indistinguishable from random perturbation. The same probe delivers substantial value as a \textbf{deployment-time selector} (best-of-16 $+12.1$\,pp; selective abstention 98\% accuracy at 50\% coverage; probe-guided budgeted restart matches best-of-16 at $-60\%$ compute; probe-mean estimates dataset accuracy within $\pm 0.4$\,pp). Using it as the \textbf{RL reward}, however, catastrophically Goodharts in both initialization regimes ($-25$\,pp accuracy from $C_{\text{outcome}}$ init; $-22$\,pp from $C_{\text{SFT}}$); the policy exploits structural stylistic confounds the probe was correlated with in its training distribution. \textbf{Strikingly, the same probe direction --- causally inert before RL --- becomes measurably causal post-Goodhart} ($\Delta_{\text{probe-vs-random}}=+0.08$ at $\alpha{=}1.0$, materially above the original null band), a concrete mech-interp signature of what optimization pressure does to a previously-correlational direction. The principled fix is to use the probe as a policy-gradient \emph{baseline} (control variate) rather than as the reward; the verifier remains the optimization target and Goodhart is structurally blocked. The unifying lesson is a \textbf{reader/writer asymmetry}: the same probe is a great deployment selector, a catastrophic RL reward, and a safe RL baseline --- the difference between those outcomes is whether the policy gets gradient access to it.
 \end{abstract}
 
 \section{Introduction}
 
-Recent work probes language models for ``what they know'' to assess whether outcome reward training amplifies or hides internal correctness representations \citep{yuan2024probing}. We study Qwen2.5-0.5B on Countdown arithmetic, where an exact verifier exists and the rollout's correctness has an unambiguous binary label.
+A growing literature uses linear probes on hidden states to ask what a language model ``knows.'' A central concern is whether outcome reward training drives the model's internal representations away from its verbalized behavior --- the ``concealment gap'' or ``knows-but-doesn't-say'' framing of \citet{yuan2024probing}. We study this question on Countdown arithmetic with Qwen2.5-0.5B (replicated at 1.5B), a setting with an exact verifier and unambiguous binary correctness labels.
 
-\paragraph{Questions we set out to answer.} (Q1) Does outcome RL drive a small SFT model's internal correctness representation \emph{down} (``knows but doesn't say'') or \emph{up} (a sharper internal verifier)? (Q2) If a strong internal verifier exists, can it deliver concrete deployment-time gains (selection, abstention, restart, accuracy estimation)? (Q3) Can it be wired into the RL training loop itself --- either as a richer reward or as a value function --- and what fails or works there?
+\paragraph{Questions.} (Q1) Does outcome RL drive a small SFT model's internal correctness representation \emph{down} (``knows-but-doesn't-say'') or \emph{up} (a sharper internal verifier)? (Q2) If a strong internal verifier exists, can it deliver concrete deployment-time gains? (Q3) Can it be wired into the RL training loop itself --- either as a reward or as a value function --- and what fails or works there?
 
-\paragraph{What we found.}
+\paragraph{Through-line.} A near-oracle linear probe of correctness emerges from outcome RL at 0.5B. The probe is highly informative as a \emph{measurement} of correctness; effective as a \emph{deployment tool} (read-only); catastrophically unsafe as an \emph{RL reward} (when the policy gets gradient access); and safe as an \emph{RL baseline} (a construction that uses the predictor without optimizing toward it). The same direction the probe lives on is causally \emph{inert} on the vanilla checkpoint --- and becomes measurably \emph{causal} after a policy has spent 100 RL steps trying to maximize it. The reader/writer asymmetry of linear probes under optimization pressure is the central observation of the project.
+
+\paragraph{Contributions.}
 \begin{enumerate}[leftmargin=2em,itemsep=2pt]
-  \item \textbf{(Q1) The probe is near-oracle and outcome RL \emph{strengthens} it.} A linear probe on the L16 residual stream at the \texttt{</think>} token achieves AUROC \textbf{0.982} on first-\texttt{<answer>}-block correctness at $C_{\text{outcome}}$ (0.974 at 1.5B). RL raises probe AUROC at every level (aggregate, per-problem, within-prompt matched-pair). The within-rollout analysis refutes a small-scale ``knows-but-doesn't-say'' framing: at each commit the probe tracks the new commit's correctness, not a preserved earlier representation.
-  \item \textbf{(Q2) Substantial applied value at deployment.} Best-of-16 selector $+12.1$\,pp; selective abstention 98\% accuracy at 50\% coverage; probe-guided budgeted restart matches best-of-16 at $60\%$ less compute; probe-mean estimates dataset accuracy within $\pm 0.4$\,pp without verifier calls. All from one probe trained on cached SFT-checkpoint activations.
-  \item \textbf{(Q3a) Probe-as-RL-reward catastrophically Goodharts}, in both initialization regimes ($-25$\,pp accuracy from $C_{\text{outcome}}$ init; $-22$\,pp from $C_{\text{SFT}}$ init). The policy exploits structural stylistic confounds the probe was correlated with in its training distribution. Post-Goodhart causal steering shows the probe direction itself becomes \emph{mildly} causal ($\Delta=+0.08$, materially above the original null).
-  \item \textbf{(Q3b) Probe-as-RL-baseline is the principled fix.} Replace the reward LOO baseline with the LOO probe-value baseline; the reward stays the verifier. Unbiased; does not Goodhart by construction. We report this as a stable principled alternative rather than as an accuracy claim --- the optimization target is unchanged from vanilla RLOO.
+  \item \textbf{(\S\ref{sec:probe-reader})} A trace-final probe with AUROC 0.982 at $C_{\text{outcome}}$ (0.974 at 1.5B). Outcome RL strengthens it at aggregate, per-problem, within-prompt matched-pair, and within-rollout commit levels. Within multi-answer rollouts, the model's representation at each commit tracks that commit's content, with no preserved hidden first-answer signal --- refuting the small-scale ``knows-but-doesn't-say'' framing.
+  \item \textbf{(\S\ref{sec:reader-not-controller})} The probe is a \emph{reader}, not a \emph{controller}. Causal steering along the probe direction has no measurable effect over a random-direction baseline at any tested magnitude. The correctness signal lives in a multidimensional subspace; any single linear direction is one cut through it.
+  \item \textbf{(\S\ref{sec:deployment})} Read-only deployment uses of the probe deliver large gains: best-of-16 $+12.1$\,pp; budgeted restart $-60\%$ compute at matched accuracy; selective abstention 98\% at 50\% coverage; adaptive budget $+2.4$\,pp at $K_{\text{avg}}{=}4$; probe-mean estimates dataset accuracy within $\pm 0.4$\,pp. The probe is largely checkpoint-invariant and scale-robust.
+  \item \textbf{(\S\ref{sec:probe-rl})} Using the same probe as the RL reward fails catastrophically in both initialization regimes (delayed Goodhart at step 40 from $C_{\text{outcome}}$ init, $-25$\,pp; immediate Goodhart from $C_{\text{SFT}}$ init, $-22$\,pp). The policy exploits structural stylistic confounds the probe was correlated with in training. \textbf{Post-Goodhart causal steering shows the probe direction has become partly causal} ($\Delta=+0.08$, materially above the original null) --- a concrete signature of what optimization pressure does to a previously-correlational direction.
+  \item \textbf{(\S\ref{sec:probe-baseline})} The principled alternative is to use the probe as a policy-gradient \emph{baseline} (a leave-one-out control variate). The optimization target stays the verifier, so Goodhart is structurally blocked. We report this as a stable construction; we do not claim it materially improves accuracy.
 \end{enumerate}
-
-The arc is: a probe that is highly informative as a \emph{measurement} of correctness; effective as a \emph{deployment tool} (read-only uses); dangerous as a \emph{training-time reward} (when the policy gets gradient access); and safe as a \emph{baseline} (the policy-gradient construction that uses the predictor without optimizing toward it).
 
 \section{Setup}
 
 \subsection{Model and Task}
 We use Qwen2.5-0.5B and the Countdown arithmetic task \citep{gandhi2024stream}: each problem gives 3--4 small integers and a target; the model must produce an equation that uses each number exactly once and evaluates to the target. The rule-based verifier in \texttt{evaluation/countdown.py} returns $\{0, 0.1, 1.0\}$ for $\{$no parseable answer, parseable-but-wrong, correct$\}$.
 
-We use Anikait Singh's \texttt{asingh15/qwen-sft-countdown-defaultproj} as our SFT baseline $C_{\text{SFT}}$ (we did not retrain SFT). We train $C_{\text{outcome}}$ via 100 RLOO steps from $C_{\text{SFT}}$ with the standard verifier reward, batch size 128, KL coefficient $10^{-3}$, learning rate $10^{-5}$. Test pass@1 rises from 28.6\% to 53.5\% (asingh15 $n{=}50$ test split).
+We use Anikait Singh's \texttt{asingh15/qwen-sft-countdown-defaultproj} as our SFT baseline $C_{\text{SFT}}$ (we did not retrain SFT). We train $C_{\text{outcome}}$ via 100 RLOO steps from $C_{\text{SFT}}$ with the standard verifier reward, batch size 128, KL coefficient $10^{-3}$, learning rate $10^{-5}$. Test pass@1 rises from 28.6\% to 53.5\% (asingh15 $n{=}50$ test split). For the 1.5B replication we trained Qwen2.5-1.5B + Countdown SFT, then 100 RLOO steps.
 
-\subsection{Eval Set} The original asingh15 test split ($n{=}50$) is too small for some matched-pair statistical claims. We procedurally generated a 500-prompt evaluation set, verified byte-identical prompt formatting to asingh15's NumPy-style brackets (e.g.\ \texttt{[14 45 \phantom{0}9 \phantom{0}1]}), and filtered out 94 problems that overlap with $C_{\text{outcome}}$'s RLOO training pool. The resulting \textbf{held-out 406} set is the primary reporting unit. All probes use \texttt{GroupKFold(5)} on \texttt{prompt\_idx} with class-balanced training subsamples.
+\subsection{Eval Set}
+The original asingh15 test split ($n{=}50$) is too small for matched-pair statistical claims. We procedurally generated a 500-prompt evaluation set with byte-identical prompt formatting to asingh15's, and filtered out 94 problems that overlap with $C_{\text{outcome}}$'s RLOO training pool. The resulting \textbf{held-out 406} set is the primary reporting unit; all probes use \texttt{GroupKFold(5)} on \texttt{prompt\_idx} with class-balanced training subsamples.
 
-\subsection{Probe Pipeline} We cache hidden states from Qwen2.5-0.5B with \texttt{output\_hidden\_states=True} at three position kinds per rollout:
+\subsection{Probe Pipeline}
+We cache hidden states from Qwen2.5-0.5B with \texttt{output\_hidden\_states=True} at three position kinds per rollout:
 \begin{itemize}[leftmargin=2em,itemsep=1pt,topsep=2pt]
   \item \texttt{pre\_answer}: the \texttt{</think>} token (one vector per rollout).
   \item \texttt{assertion}: every occurrence of a confidence keyword in the \texttt{<think>} body (\texttt{Perfect, this works, got it, the answer is, verified}).
   \item \texttt{neutral}: count-matched random positions from the same \texttt{<think>} body (control).
 \end{itemize}
-Probes are logistic regression at three layers (L12, L16, L20) with $L_2$ regularization $C{=}0.1$. L16 is the primary reporting layer.
+Probes are logistic regression at three layers (L12, L16, L20) with $L_2$ regularization $C{=}0.1$. L16 is the primary reporting layer. A position-appropriate probe is trained directly on \texttt{<answer>}-opening hidden states for the within-rollout trajectory analysis. Labels are next-block correctness throughout.
 
-A position-appropriate probe is trained directly on \texttt{<answer>}-opening hidden states for the within-rollout trajectory analysis (\S\ref{sec:within-rollout}). Labels are next-block correctness throughout.
-
-\section{The Trace-Final Probe is a Near-Oracle Internal Verifier}
+\section{The Probe is Near-Oracle, and Outcome RL Strengthens It}\label{sec:probe-reader}
 
 \subsection{Aggregate AUROC}
 
@@ -74,42 +75,21 @@ A position-appropriate probe is trained directly on \texttt{<answer>}-opening hi
 \small
 \begin{tabular}{lccc}
 \toprule
-Position (L16, balanced 5-fold CV, $n{=}406$ clean) & $C_{\text{SFT}}$ AUROC & $C_{\text{outcome}}$ AUROC & $\Delta$ \\
+Position (L16, balanced 5-fold CV, $n{=}406$) & $C_{\text{SFT}}$ & $C_{\text{outcome}}$ & $\Delta$ \\
 \midrule
 \texttt{</think>} (trace-final) & \textbf{0.904} & \textbf{0.980} & \textbf{+0.076} \\
 confidence-asserting tokens & 0.887 & 0.852 & $-0.035$ \\
 neutral tokens (control) & 0.562 & 0.562 & 0.000 \\
-\midrule
-gap = pre\_answer $-$ assertion & +0.017 & \textbf{+0.127} & +0.110 \\
 \bottomrule
 \end{tabular}
-\caption{Probe AUROC by position and checkpoint. Outcome RL strengthens the trace-final correctness representation by 0.076; the position gap grows 7$\times$. Shuffled-label baselines are 0.48--0.51; random-direction baselines 0.50--0.74.}
+\caption{Probe AUROC by position and checkpoint. The trace-final probe is near-oracle on $C_{\text{outcome}}$ and outcome RL strengthens it by 0.076. Shuffled-label baselines are 0.48--0.51; random-direction baselines 0.50--0.74. Outcome RL also raises probe AUROC at the per-problem level (mean 0.882 $\to$ 0.927) and produces highly significant within-prompt matched-pair effects on both checkpoints (Wilcoxon $p < 10^{-7}$).}
 \end{table}
 
-\subsection{The Gap Emerges Over Training}
-
-We re-sampled fresh rollouts ($n{=}200$) from three intermediate $C_{\text{outcome}}$ snapshots (steps 30, 60, 90), re-cached hidden states, and re-trained probes per snapshot with corrected labels:
-
-\begin{table}[h]
-\centering
-\small
-\begin{tabular}{lcccc}
-\toprule
-Step & \texttt{</think>} AUROC & assertion AUROC & gap & mean blocks/rollout \\
-\midrule
-$C_{\text{SFT}}$ (pre-RL) & 0.912 & 0.885 & +0.027 & 2.83 \\
-step 30 & 0.907 & 0.867 & +0.040 & 3.09 \\
-step 60 & 0.962 & 0.914 & +0.048 & 4.49 \\
-step 90 & 0.971 & 0.835 & \textbf{+0.136} & 7.18 \\
-$C_{\text{outcome}}$ (final) & 0.982 & 0.896 & +0.086 & 7.41 \\
-\bottomrule
-\end{tabular}
-\caption{Position-gap dynamics across RLOO snapshots. Pearson $r(\text{mean\_blocks}, \text{gap}) = +0.891$ ($p = 0.04$). Mean-blocks is reported under the original eval sampler; the gap itself is a probe-AUROC observation independent of the rollout block count.}
-\end{table}
+\paragraph{Scale.} At 1.5B, the trace-final probe AUROC is 0.974 on the held-out 406, matching the 0.5B headline.
 
 \subsection{Within-Rollout Belief Updates}\label{sec:within-rollout}
 
-Our eval sampling regime produced rollouts that often contained multiple \texttt{<answer>} blocks: of 6496 held-out $C_{\text{outcome}}$ rollouts, 84\% had $\geq 2$ blocks, of which 490 emit a correct first equation and ``drift'' to a wrong final one. This gives us a setting to test a sharper version of Q1: at the wrong-final \texttt{<answer>} position, does the probe still encode the \emph{first} answer's correctness (consistent with ``knows but doesn't say''), or has the representation moved with the new commit?
+The eval rollouts often contained multiple \texttt{<answer>} blocks (84\% with $\geq 2$ blocks on the held-out 406). This gives us a sharper test of Q1: of the 490 rollouts that emit a correct first equation and ``drift'' to a wrong final one, does the probe at the \emph{wrong-final} commit still encode the first answer's correctness (consistent with ``knows-but-doesn't-say''), or has the representation moved with the new commit?
 
 We train a position-appropriate probe directly on \texttt{<answer>}-opening hidden states (diagonal AUROC 0.920 at L16). Per-transition class, mean probe at the first vs.\ last commit:
 \begin{table}[h]
@@ -125,16 +105,15 @@ TT both correct & 2983 & 0.874 & 0.823 & 1.00 & 1.00 \\
 FF both wrong & 1835 & 0.084 & 0.088 & 0.00 & 0.00 \\
 \bottomrule
 \end{tabular}
-\caption{Within-rollout probe trajectory. On T$\to$F drift rollouts, probe(last)$=0.154$ is statistically indistinguishable from the F$\to$F floor (0.088): the model's commit-time representation has moved to the wrong answer, with no preserved earlier signal. The same effect holds bidirectionally on F$\to$T rescue rollouts.}
+\caption{Within-rollout probe trajectory. On T$\to$F drift, probe(last)$=0.154$ is statistically indistinguishable from the F$\to$F floor (0.088): the model's commit-time representation has moved to the wrong answer, with no preserved earlier signal. Bidirectional in F$\to$T.}
 \end{table}
 
-The model's representation at each commit tracks that commit's content. There is no preserved hidden correctness signal at the wrong-final position for a ``knows but doesn't say'' framing to point to. (Phase~2B activation patching was skipped per pre-registered gating: there is no preserved signal to inject.)
+The model's representation at each commit tracks that commit's content. There is no preserved hidden correctness signal for a ``knows-but-doesn't-say'' framing to point to. This is the small-scale refutation of \citet{yuan2024probing}'s framing as a description of internal-vs-verbalized belief at our scale.
 
-\subsection{Causal Steering: The Probe is a Reader, Not a Controller}\label{sec:causal-steering}
+\section{The Probe is a Reader, Not a Controller}\label{sec:reader-not-controller}
 
-We test whether the trace-final probe direction is causally tied to generation by adding $\alpha \cdot \bar{\|h\|} \cdot v_{\text{unit}}$ to the L16 residual stream at \texttt{</think>}, then continuing generation under the patched representation.
+The §\ref{sec:probe-reader} probe is highly \emph{informative} (AUROC 0.98). Is it also \emph{causal}? We test by adding $\alpha \cdot \bar{\|h\|} \cdot v_{\text{unit}}$ to the L16 residual stream at \texttt{</think>}, then continuing generation under the patched representation:
 
-Result ($n{=}97$ prefixes, $C_{\text{outcome}}$):
 \begin{table}[h]
 \centering
 \small
@@ -148,14 +127,16 @@ $\alpha$ & probe-direction accuracy & random-direction accuracy & $\Delta$ (prob
 2.0 & 0.515 & 0.546 & $-0.031$ \\
 \bottomrule
 \end{tabular}
-\caption{Causal steering at \texttt{</think>}. The probe direction's effect is statistically indistinguishable from random-direction perturbation at every magnitude tested.}
+\caption{Causal steering at \texttt{</think>}, $C_{\text{outcome}}$, $n{=}97$ prefixes. The probe direction's effect is statistically indistinguishable from random-direction perturbation at every tested magnitude. The probe-vs-random null band is $\Delta \in [-0.07, +0.02]$. Remember this band --- §\ref{sec:probe-rl-causal} compares against it.}
 \end{table}
 
-The probe identifies a linear direction that \emph{predicts} correctness but is \emph{not} a causal write-axis. Combined with cosine-similarity analysis (within-checkpoint cross-position cosines $\leq 0.10$, but cross-checkpoint transfer AUROC remains $0.95+$), this implies the correctness signal lives in a high-dimensional subspace; any single linear direction is one cut through it. The probe reads well from the subspace but writing along it does not redirect generation.
+The probe identifies a linear direction that \emph{predicts} correctness but is not a causal write-axis. Combined with cosine-similarity analysis (within-checkpoint cross-position cosines $\leq 0.10$, while cross-checkpoint within-position transfer AUROC stays $\geq 0.95$), this implies the correctness signal lives in a high-dimensional subspace; any single linear direction is one cut through it. \textbf{The probe reads well from the subspace; writing along it does not redirect generation.}
 
-\section{Applied Probe: Substantial Deployment-Time Value}
+This sets up the central tension of the paper: the probe is informative, correlational, and (on the vanilla checkpoint) causally inert. The next two sections show that whether this matters depends entirely on \emph{how} you use the probe.
 
-The near-oracle probe enables several deployment-time improvements without retraining the model. We separate \emph{across-rollout} uses (multiple independent rollouts; probe selects among them) from \emph{within-rollout} uses (a single rollout contains multiple answer blocks; probe picks the best block):
+\section{Reading the Probe at Deployment Works Well}\label{sec:deployment}
+
+The reader role of the probe pays off cleanly when we use it for read-only deployment-time decisions. We separate \emph{across-rollout} uses (multiple independent rollouts; probe selects among them) from \emph{within-rollout} uses (one multi-block rollout; probe picks the best block):
 
 \begin{table}[h]
 \centering
@@ -179,68 +160,74 @@ oracle pick-first-correct (any block correct; upper bound) & 0.671 & $+9.7$\,pp 
 \textbf{probe-commit (T=0.35, fallback=last)} & \textbf{0.661} & \textbf{$+8.7$\,pp} \\
 \bottomrule
 \end{tabular}
-\caption{Applied-probe results on $C_{\text{outcome}}$ held-out 406. The probe is useful both in standard best-of-K (across independent rollouts) and within the multi-answer rollouts the model produces, picking the best block without any additional sampling cost.}
+\caption{Read-only deployment uses of the probe. All numbers on $C_{\text{outcome}}$ held-out 406. The probe is useful both in standard best-of-K and within the multi-answer rollouts the model produces, with the within-rollout use recovering most of the achievable lift at \emph{no additional sampling cost}.}
 \end{table}
 
-The probe's per-prompt mean across 16 rollouts correlates with per-prompt accuracy at Pearson $r{=}0.967$. A probe trained on $C_{\text{SFT}}$ activations transfers to $C_{\text{outcome}}$ with only 0.029 AUROC drop ($0.982 \to 0.953$) and $-1.8$\,pp best-of-16 selector lift --- the probe is largely checkpoint-invariant. Cross-scale, the same strategies generalize to 1.5B (AUROC 0.974, best-of-16 $+8.6$\,pp, abstention 93\% at 50\% coverage).
+The probe's per-prompt mean across 16 rollouts correlates with per-prompt accuracy at Pearson $r{=}0.967$, giving an essentially-free dataset-accuracy estimate. A probe trained on $C_{\text{SFT}}$ activations transfers to $C_{\text{outcome}}$ with only 0.029 AUROC drop ($0.982 \to 0.953$) and a $-1.8$\,pp best-of-16 selector lift: largely checkpoint-invariant. Cross-scale, the same strategies generalize to 1.5B (AUROC 0.974, best-of-16 $+8.6$\,pp, abstention 93\% at 50\% coverage).
 
-\paragraph{An incidental use of the multi-block rollouts.} The within-rollout probe-commit row is a complement to best-of-K, not a replacement. Because the eval-time rollouts contain multiple candidate equations (\S\ref{sec:within-rollout}), we can rank them with the same probe and recover most of the achievable lift over the verifier's default last-block extraction (oracle ceiling 0.671; we hit 0.661). This gain costs no additional sampling --- it reuses candidates the rollout has already produced. Whether the underlying multi-answer emission is the model's intended behavior is a separate question; treated purely as ``free extra samples to pick from,'' it is unambiguously useful when paired with the probe.
+The probe-commit row deserves an extra note: it is an incidental use of the model's multi-answer rollouts. Treating those rollouts as a source of ``free extra candidates,'' the probe ranks them well enough to recover 8.7 of the 9.7\,pp achievable lift over verifier-default --- at \emph{zero} additional sampling. Whether the underlying multi-answer emission is the model's intended behavior is a separate question; treated purely as free extra samples to pick from, it is unambiguously useful when paired with the probe.
 
-\section{Probe-as-RL-Reward Catastrophically Goodharts}\label{sec:probe-rl}
+\section{Writing Through the Probe in RL Fails Catastrophically}\label{sec:probe-rl}
 
-A near-oracle deployment probe is excellent. The natural follow-up: use it during RL training as a reward signal? We tested this in two regimes, each 100 RLOO steps with identical hyperparameters to vanilla:
+The probe is a great reader. What happens if we promote it to a \emph{writer} --- the optimization target of an RL training run? We tested this in two initialization regimes, each 100 RLOO steps with identical hyperparameters to vanilla outcome RL:
 \begin{description}[leftmargin=2em,itemsep=2pt,topsep=2pt]
   \item[\texttt{runA}] Init from $C_{\text{outcome}}$ (probe in-distribution at step 0).
   \item[\texttt{runB}] Init from $C_{\text{SFT}}$ (probe cross-distribution at step 0).
 \end{description}
+The reward is the probe's $P(\text{correct})$, read at the \texttt{</think>} token of a frozen reference model (reloaded each round from the latest checkpoint). The verifier is logged for diagnostics but does not enter the gradient.
 
-\subsection{Training Trajectories}
+\subsection{Two Distinct Goodhart Dynamics}
 
 \begin{table}[h]
 \centering
 \small
-\begin{tabular}{lcccc}
+\begin{tabular}{lcccccccc}
 \toprule
-Step & \texttt{runA} probe / verifier / gap & KL & \texttt{runB} probe / verifier / gap & KL \\
+Step & \multicolumn{3}{c}{\texttt{runA} (C\_outcome init)} & KL & \multicolumn{3}{c}{\texttt{runB} (C\_SFT init)} & KL \\
+\cmidrule(lr){2-4}\cmidrule(lr){6-8}
+& probe & verifier & gap & & probe & verifier & gap & \\
 \midrule
-0   & 0.452 / 0.572 / $-0.120$ & 0.000 & 0.471 / 0.298 / $+0.173$ & 0.000 \\
-20  & 0.561 / 0.582 / $-0.021$ & 0.082 & 0.863 / 0.190 / $+0.674$ & 0.147 \\
-30  & 0.553 / 0.525 / $+0.028$ & 0.099 & 0.925 / 0.207 / $+0.718$ & 0.198 \\
-\textbf{40}  & \textbf{0.687 / 0.528 / $+0.159$} & 0.232 & 0.957 / 0.215 / $+0.741$ & 0.277 \\
-60  & 0.947 / 0.385 / $+0.561$ & 0.255 & 0.990 / 0.203 / $+0.786$ & 0.294 \\
-99 (final) & 0.991 / 0.321 / $+0.671$ & 0.374 & 0.990 / 0.166 / $+0.824$ & 0.535 \\
+0   & 0.452 & 0.572 & $-0.120$ & 0.00 & 0.471 & 0.298 & $+0.173$ & 0.00 \\
+20  & 0.561 & 0.582 & $-0.021$ & 0.08 & 0.863 & 0.190 & $+0.674$ & 0.15 \\
+30  & 0.553 & 0.525 & $+0.028$ & 0.10 & 0.925 & 0.207 & $+0.718$ & 0.20 \\
+\textbf{40}  & \textbf{0.687} & \textbf{0.528} & \textbf{$+0.159$} & 0.23 & 0.957 & 0.215 & $+0.741$ & 0.28 \\
+60  & 0.947 & 0.385 & $+0.561$ & 0.26 & 0.990 & 0.203 & $+0.786$ & 0.29 \\
+99 (final) & 0.991 & 0.321 & $+0.671$ & 0.37 & 0.990 & 0.166 & $+0.824$ & 0.54 \\
 \bottomrule
 \end{tabular}
-\caption{Probe-RL training trajectories. \texttt{runA} (in-distribution) shows \textbf{delayed Goodhart}: probe and verifier track for $\sim$30 steps, then the gap suddenly widens. \texttt{runB} (cross-distribution) shows \textbf{immediate Goodhart}: probe rises from 0.47 to 0.99 in 50 steps while verifier monotonically drops.}
+\caption{Probe-RL training trajectories. \texttt{runA} (in-distribution) shows \textbf{delayed Goodhart}: probe and verifier track for $\sim$30 steps, then the gap suddenly widens. \texttt{runB} (cross-distribution) shows \textbf{immediate Goodhart}: probe rises 0.47 $\to$ 0.99 in 50 steps while verifier monotonically drops.}
 \end{table}
+
+The two regimes Goodhart on different timescales but reach the same end: probe pegged near 1.0 while verifier collapses.
 
 \subsection{Downstream Eval}
 
 \begin{table}[h]
 \centering
 \small
-\begin{tabular}{lcccc}
+\begin{tabular}{lcc}
 \toprule
-Checkpoint & first-block acc & last-block acc & mean blocks/rollout & 1-block \% \\
+Checkpoint & first-block accuracy & vs.\ same-init baseline \\
 \midrule
-$C_{\text{SFT}}$ & 0.290 & 0.238 & 2.71 & 39\% \\
-$C_{\text{outcome}}$ (vanilla) & \textbf{0.550} & 0.498 & 6.78 & 16\% \\
-\textbf{probe-RL runA} & 0.236 & 0.130 & 15.55 & 0\% \\
-\textbf{probe-RL runB} & 0.073 & 0.072 & 1.27 & 77\% \\
+$C_{\text{SFT}}$ (start, no RL) & 0.290 & --- \\
+$C_{\text{outcome}}$ (vanilla RLOO from $C_{\text{SFT}}$) & \textbf{0.550} & $+26$\,pp \\
+\midrule
+\textbf{probe-RL \texttt{runA}} (RLOO from $C_{\text{outcome}}$) & \textbf{0.236} & $-31$\,pp from $C_{\text{outcome}}$ \\
+\textbf{probe-RL \texttt{runB}} (RLOO from $C_{\text{SFT}}$) & \textbf{0.073} & $-22$\,pp from $C_{\text{SFT}}$ \\
 \bottomrule
 \end{tabular}
-\caption{Probe-RL final checkpoints have the worst first-block accuracies on record. Both reached $\sim 0.99$ probe score by emitting structurally similar but mathematically wrong rollouts. The two runs adopted \emph{opposite} structural exploits for the same probe direction.}
+\caption{Probe-RL final checkpoints have the worst first-block accuracies on record across the project. Both reached $\sim 0.99$ probe score by emitting structurally similar but mathematically wrong rollouts.}
 \end{table}
 
-\subsection{Diagnosis: Structural Confound Exploitation}
+\subsection{Mechanism: Structural Confound Exploitation}
 
 We inspected 30 high-probe \texttt{runB} rollouts. Every $\text{probe}{=}1.0$ rollout shared a template: ``Let me analyze this step by step:'' opener; numbered enumeration; verification language (``Therefore, our solution is valid.''); specific \texttt{</think>\textbackslash n\textbackslash n<answer>} formatting. Despite the rhetorical scaffold, the actual answers were wrong and often invalid (e.g., \texttt{((43 - 4) - (56 - 50)) = 39}, using \texttt{4} which is not in the input).
 
-The probe was trained on $C_{\text{outcome}}$ rollouts where correctness covaries with structured reasoning style. It picked up the structural surface, not the underlying mathematics. The policy then maximized the probe by emitting that template, divorced from actual correctness. Classic confound exploitation.
+The probe was trained on $C_{\text{outcome}}$ rollouts where correctness covaries with structured reasoning style. It picked up the structural surface, not the underlying mathematics. The policy then maximized the probe by emitting that template, divorced from actual correctness. Classic confound exploitation. The two runs adopted \emph{opposite} structural exploits for the same probe direction --- \texttt{runA} learned to ramble (many blocks), \texttt{runB} learned to commit early (one block) --- both reaching probe $\approx$ 0.99.
 
-\subsection{Causal Steering on the Post-Goodhart Checkpoint}
+\subsection{The Probe Direction Itself Becomes Causal}\label{sec:probe-rl-causal}
 
-The §\ref{sec:causal-steering} causal-steering null on vanilla $C_{\text{outcome}}$ said the probe direction is not a causal control axis. We re-ran the experiment on \texttt{runA}'s post-Goodhart checkpoint:
+The §\ref{sec:reader-not-controller} causal-steering null said the probe direction is \emph{not} a causal control axis on the vanilla checkpoint. We re-ran the identical experiment on \texttt{runA}'s post-Goodhart checkpoint:
 
 \begin{table}[h]
 \centering
@@ -255,39 +242,60 @@ $\alpha$ & probe-acc & random-acc & $\Delta$ (probe $-$ random) \\
 2.0 & 0.175 & 0.227 & $-0.052$ \\
 \bottomrule
 \end{tabular}
-\caption{Causal steering on \texttt{runA} post-Goodhart. At $\alpha{=}1.0$, the probe direction now controls accuracy by $+8.3$\,pp over random --- materially above the original $[-0.07, +0.02]$ null band. RL installed a partial causal write-pathway to the probe direction.}
+\caption{Causal steering on \texttt{runA} post-Goodhart. At $\alpha{=}1.0$, the probe direction now controls accuracy by $+8.3$\,pp over random --- materially outside the original null band $[-0.07, +0.02]$ from §\ref{sec:reader-not-controller}. \textbf{RL has installed a partial causal write-pathway to a direction that was causally inert before.}}
 \end{table}
 
-The effect is small ($\sim 8$\,pp on a 17--25\% baseline) compared to the 25\,pp overall accuracy drop. So probe-RL gaming has two layers: a dominant structural-confound layer (the rhetorical template), and a smaller-but-measurable causal-axis layer (the probe direction itself became partially controllable).
+This is the mech-interp signature we set up the paper for. A direction that was a pure \emph{reader} of correctness before RL (probe-vs-random $\Delta \in [-0.07, +0.02]$) is, after 100 steps of optimization toward that direction, measurably \emph{causal} ($\Delta = +0.08$ at $\alpha{=}1.0$). The policy did two things: (i) it found structural-stylistic confounds the probe was correlated with and amplified those (the dominant exploit, visible in the rollout samples), and (ii) along the way, it partially installed the probe direction itself as a control axis in its own representation.
 
-\subsection{Takeaway}
-Near-oracle linear probes (AUROC 0.98) on a task's natural rollout distribution are excellent inference-time tools but unsafe as RL rewards. The boundary between probe-as-deployment-tool (works) and probe-as-RL-reward (Goodharts catastrophically) is whether the policy gets gradient access to the probe's input distribution.
+Both effects together are why the probe is unsafe as an RL reward: optimization pressure does not just pick up confounds, it also reshapes the model's representational geometry to make a previously-correlational direction increasingly causal --- but in a way that is decoupled from the true reward (verifier accuracy crashed). The reader/controller distinction is not a fixed property of the model; it is contingent on whether the policy has gradient access to the direction.
 
-\section{Probe-as-Baseline: A Principled, Stable Alternative}\label{sec:probe-baseline}
+\section{The Safe Construction: Probe-as-Baseline}\label{sec:probe-baseline}
 
-§\ref{sec:probe-rl} showed that using the near-oracle probe as the RL reward catastrophically Goodharts. Policy-gradient theory points to a different role for a near-oracle predictor: as a \emph{baseline} (a control variate that the optimization is invariant to), not as the reward. We implemented this variant (contributed by co-author Anagha Ramaswamy; see \texttt{rloo\_trainer/rloo\_update\_worker.py}).
+§\ref{sec:probe-rl} showed that wiring a near-oracle probe in as the RL reward fails. The principled construction is to use it as the policy-gradient \emph{baseline} --- a control variate whose only role is to reduce gradient variance, and which the optimization is invariant to. The verifier remains the reward (contributed by co-author Anagha Ramaswamy; see \texttt{rloo\_trainer/rloo\_update\_worker.py}).
 
-\paragraph{The construction.} Standard RLOO uses the leave-one-out mean of group rewards as the baseline:
-$$A_i = r_i - \frac{1}{G-1} \sum_{j \neq i} r_j$$
+\paragraph{Construction.} Standard RLOO uses the leave-one-out mean of group rewards as the baseline:
+$$A_i = r_i - \frac{1}{G-1} \sum_{j \neq i} r_j.$$
 We replace the baseline with the leave-one-out mean of \emph{probe values}:
-$$A_i = r_i - \frac{1}{G-1} \sum_{j \neq i} v_\theta(s_j)$$
-The reward $r_i$ stays the verifier; only the baseline changes. Since the baseline does not depend on rollout $i$'s action, this is unbiased \citep{williams1992simple, ahmadian2024back}. Because the probe is a near-oracle predictor of the verifier's reward (AUROC 0.982), the LOO probe-mean is a smoother estimate of expected reward than the LOO reward-mean.
+$$A_i = r_i - \frac{1}{G-1} \sum_{j \neq i} v_\theta(s_j).$$
+The reward $r_i$ stays the verifier; only the baseline changes. Since the baseline does not depend on rollout $i$'s sampled action, this is unbiased \citep{williams1992simple, ahmadian2024back}.
 
 \paragraph{Why this avoids Goodhart.} The optimization target is the verifier reward, unchanged from vanilla RLOO. The probe enters only through the baseline, which is a control variate, not a directional signal. The policy has no incentive to game the probe, because doing so does not change $r_i$.
 
-\paragraph{What we claim, and what we don't.} The contribution is a \emph{principled, stable} way to wire a near-oracle internal predictor into the RL update without the failure mode of §\ref{sec:probe-rl}. We do \emph{not} claim it materially improves accuracy --- by construction, the optimization target is unchanged from vanilla RLOO, so the expected end-state is the same policy. The variance-reduction motivation is the theoretical justification \citep{williams1992simple}; in practice, the LOO-over-rewards baseline that standard RLOO already uses is itself a reasonable variance reducer, so the marginal gain from swapping in a probe-value baseline depends on how concentrated the group reward distribution is. We report the construction as a working alternative to the Goodharting probe-as-reward, not as a strict accuracy or compute win.
+\paragraph{What we claim, and what we don't.} The contribution is a \emph{principled, stable} way to wire a near-oracle internal predictor into the RL update without the §\ref{sec:probe-rl} failure mode. We do \emph{not} claim a separate accuracy improvement: by construction the optimization target is unchanged from vanilla RLOO, so the expected end-state is the same policy. The variance-reduction motivation is theoretical \citep{williams1992simple}; whether it produces a measurable empirical gain depends on how concentrated the group reward distribution is, which the standard LOO-over-rewards baseline already addresses partially.
 
-\paragraph{Status.} Code-complete: \texttt{--probe\_baseline} flag, per-rollout probe-value computation, LOO baseline path. A controlled comparison against vanilla RLOO from the same initialization is the natural next experiment.
+\paragraph{Status.} Code-complete: \texttt{--probe\_baseline} flag, per-rollout probe-value computation, LOO probe-baseline path. A controlled comparison against vanilla RLOO from a matched initialization is the natural next experiment.
 
 \section{Discussion}
 
-\subsection{Probes as Measurement, Not Control}
+\subsection{The Reader/Writer Asymmetry}
 
-Our results jointly support a particular reading of small-scale internal-state probing: the probe is a measurement instrument that becomes extremely informative as outcome reward sharpens the underlying representation, but it is a \emph{correlational reader} of a multidimensional subspace, not a causal control axis. Deployment uses that respect this distinction (best-of-K, abstention, restart) work cleanly. Uses that violate it (probe-as-reward) catastrophically fail. A principled middle ground --- using the probe as the policy-gradient \emph{baseline} (\S\ref{sec:probe-baseline}) --- preserves the verifier as the optimization target and so does not crash; we report it as a working alternative rather than as a claim of accuracy improvement.
+Pulling §\ref{sec:probe-reader}--\ref{sec:probe-baseline} together: the same linear probe takes four different roles in our experiments, and the outcome in each is shaped by whether the policy gets gradient access to the probe.
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{p{4.3cm}p{4.3cm}p{4.6cm}}
+\toprule
+Use & Probe's role & Outcome \\
+\midrule
+Best-of-K / abstention / restart / eval-proxy & Reader (read-only at deployment) & Large lifts ($+8$ to $+13$\,pp) \\
+Causal steering on vanilla & Writer (intervention) & Null (probe is not a causal axis) \\
+RL reward & Optimization target & Catastrophic Goodhart; \emph{post hoc}, the direction itself becomes partially causal \\
+RL baseline & Control variate & Stable; no Goodhart by construction \\
+\bottomrule
+\end{tabular}
+\caption{The four roles of one probe.}
+\end{table}
+
+Two non-obvious consequences:
+
+(1) \textbf{Reader and controller are not fixed properties of the probe} --- they depend on the model state. The §\ref{sec:reader-not-controller} null and the §\ref{sec:probe-rl-causal} $+0.083$ are the \emph{same probe direction, same experimental protocol, different checkpoint}. Optimization pressure reshaped the representational geometry to make the previously-inert direction partially controllable.
+
+(2) \textbf{The safe ways to use a near-oracle internal predictor are those where the policy does not get gradient access to it}. Inference-time selection (read-only) works. Policy-gradient baseline (control variate, invariant) works. Reward (optimization target) catastrophically fails. The framing ``use the probe as a learned reward'' is exactly the worst case in this taxonomy.
 
 \subsection{Comparison with Yuan et al.}
 
-Yuan et al.\ \citep{yuan2024probing} report a ``concealment gap'' at 1.5B+: the model internally represents that the answer is wrong while verbally claiming it is right. Our within-rollout analysis at 0.5B refutes this framing locally --- on T$\to$F drift rollouts the probe at the wrong-final position is statistically indistinguishable from the F$\to$F floor. The model's commit-time belief tracks the commit. This is a scale-dependent finding worth disentangling: ``small SFT model + outcome RL'' may not exhibit the same separation between internal-belief and verbal-claim that larger or differently-trained models show.
+\citet{yuan2024probing} report a ``concealment gap'' at 1.5B+: the model's internal state encodes correctness while its verbalization diverges. At our scale (0.5B, with a 1.5B replication of the probe AUROC), the within-rollout analysis (§\ref{sec:within-rollout}) refutes this framing locally --- on T$\to$F drift rollouts the probe at the wrong-final position matches the F$\to$F floor; the model's commit-time belief tracks the commit. This is a scale-dependent finding worth disentangling: ``small SFT model + outcome RL'' may not exhibit the same separation between internal-belief and verbal-claim that larger or differently-trained models show.
 
 \section{Limitations}
 
@@ -297,12 +305,12 @@ Yuan et al.\ \citep{yuan2024probing} report a ``concealment gap'' at 1.5B+: the 
   \item $C_{\text{SFT}}$ is \texttt{asingh15/qwen-sft-countdown-defaultproj}, not a team-trained SFT.
   \item Most analyses at 0.5B; 1.5B coverage is the aggregate AUROC, matched-pair, and applied results.
   \item The probe-as-baseline implementation (\S\ref{sec:probe-baseline}) is code-complete; a controlled run-time comparison against vanilla RLOO is the natural next step and is out of scope for this report.
-  \item We do not make a causal claim about whether ``rambling'' (multi-\texttt{<answer>}-block emission at eval time) is a reward-hack of the verifier scoring rule. Reward-shape ablations we ran were confounded by infrastructure choices in the sampling stack; we do not present them as evidence.
+  \item We do not make a causal claim about the multi-answer rollout emission (``rambling''). Reward-shape ablations we ran were confounded by infrastructure choices in the sampling stack; we do not present them as evidence.
 \end{itemize}
 
 \section{Conclusion}
 
-A near-oracle internal verifier emerges at the trace-final position under outcome RL on Countdown arithmetic at 0.5B, with substantial deployment-time value (selection, abstention, restart, eval-proxy) and a clear failure mode when repurposed as an RL reward (Goodhart in both initialization regimes). The model's internal correctness representation is sharpened by RL at every level we measure and is most parsimoniously framed as a multidimensional subspace from which any single linear direction reads well but writes poorly. The principled use of such a near-oracle predictor in RL is as a control-variate baseline for the true verifier reward, not as the reward itself; we implement this construction as a stable alternative to probe-as-reward, without claiming a separate accuracy gain.
+A near-oracle internal verifier ($\text{AUROC}=0.982$) emerges in the hidden states of an outcome-RL'd small language model. The probe that reads this representation is highly informative as a deployment selector (best-of-K, abstention, restart, eval-proxy, all with substantial lifts), catastrophically unsafe as an RL reward (Goodhart in both initialization regimes), and safe as an RL baseline (control variate, optimization target unchanged). The same probe direction is causally inert on the vanilla checkpoint and measurably causal after a policy has spent 100 RL steps trying to maximize it. The unifying lesson is a reader/writer asymmetry: the four roles a single near-oracle probe can play in an RL system have qualitatively different safety properties, and which one you land in is determined by whether the policy gets gradient access to the probe.
 
 \bibliographystyle{plain}
 \begin{thebibliography}{9}
