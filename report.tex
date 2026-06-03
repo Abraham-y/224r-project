@@ -32,14 +32,19 @@ We train a linear probe at the final-thinking token (\texttt{</think>}) of Qwen2
 
 \section{Introduction}
 
-Recent work on probing language models for ``what they know'' has motivated the question of whether a small SFT model trained on a narrow task and then optimized with outcome reward (RLOO) develops internal representations of its own correctness, and whether those representations decouple from what the model verbalizes \citep{yuan2024probing}. We study this on Countdown arithmetic with Qwen2.5-0.5B, where an exact verifier exists.
+Recent work probes language models for ``what they know'' to assess whether outcome reward training amplifies or hides internal correctness representations \citep{yuan2024probing}. We study Qwen2.5-0.5B on Countdown arithmetic, where an exact verifier exists and the rollout's correctness has an unambiguous binary label.
 
-We make three contributions:
+\paragraph{Questions we set out to answer.} (Q1) Does outcome RL drive a small SFT model's internal correctness representation \emph{down} (``knows but doesn't say'') or \emph{up} (a sharper internal verifier)? (Q2) If a strong internal verifier exists, can it deliver concrete deployment-time gains (selection, abstention, restart, accuracy estimation)? (Q3) Can it be wired into the RL training loop itself --- either as a richer reward or as a value function --- and what fails or works there?
+
+\paragraph{What we found.}
 \begin{enumerate}[leftmargin=2em,itemsep=2pt]
-  \item \textbf{Probe-as-measurement.} A linear probe trained on the L16 residual stream at the \texttt{</think>} token achieves AUROC 0.982 on first-\texttt{<answer>}-block correctness at C\_outcome (0.974 at 1.5B); outcome RL strengthens this representation at every level; the probe is correlational, not causal.
-  \item \textbf{Probe-as-RL-reward fails.} Using the near-oracle probe as an RLOO reward catastrophically Goodharts in both initialization regimes; the policy exploits structural confounds the probe was correlated with in its training distribution.
-  \item \textbf{Probe-as-RL-baseline: a stable principled alternative.} The principled use of a near-oracle predictor in policy gradient is as a leave-one-out control variate (a baseline), not the reward. We implement this; it preserves the verifier as the optimization target and so is unbiased and does not Goodhart. We do not claim it materially improves accuracy --- it is a working alternative to the unsafe probe-as-reward, not a strict accuracy win.
+  \item \textbf{(Q1) The probe is near-oracle and outcome RL \emph{strengthens} it.} A linear probe on the L16 residual stream at the \texttt{</think>} token achieves AUROC \textbf{0.982} on first-\texttt{<answer>}-block correctness at $C_{\text{outcome}}$ (0.974 at 1.5B). RL raises probe AUROC at every level (aggregate, per-problem, within-prompt matched-pair). The within-rollout analysis refutes a small-scale ``knows-but-doesn't-say'' framing: at each commit the probe tracks the new commit's correctness, not a preserved earlier representation.
+  \item \textbf{(Q2) Substantial applied value at deployment.} Best-of-16 selector $+12.1$\,pp; selective abstention 98\% accuracy at 50\% coverage; probe-guided budgeted restart matches best-of-16 at $60\%$ less compute; probe-mean estimates dataset accuracy within $\pm 0.4$\,pp without verifier calls. All from one probe trained on cached SFT-checkpoint activations.
+  \item \textbf{(Q3a) Probe-as-RL-reward catastrophically Goodharts}, in both initialization regimes ($-25$\,pp accuracy from $C_{\text{outcome}}$ init; $-22$\,pp from $C_{\text{SFT}}$ init). The policy exploits structural stylistic confounds the probe was correlated with in its training distribution. Post-Goodhart causal steering shows the probe direction itself becomes \emph{mildly} causal ($\Delta=+0.08$, materially above the original null).
+  \item \textbf{(Q3b) Probe-as-RL-baseline is the principled fix.} Replace the reward LOO baseline with the LOO probe-value baseline; the reward stays the verifier. Unbiased; does not Goodhart by construction. We report this as a stable principled alternative rather than as an accuracy claim --- the optimization target is unchanged from vanilla RLOO.
 \end{enumerate}
+
+The arc is: a probe that is highly informative as a \emph{measurement} of correctness; effective as a \emph{deployment tool} (read-only uses); dangerous as a \emph{training-time reward} (when the policy gets gradient access); and safe as a \emph{baseline} (the policy-gradient construction that uses the predictor without optimizing toward it).
 
 \section{Setup}
 
@@ -104,9 +109,9 @@ $C_{\text{outcome}}$ (final) & 0.982 & 0.896 & +0.086 & 7.41 \\
 
 \subsection{Within-Rollout Belief Updates}\label{sec:within-rollout}
 
-Of 6496 held-out $C_{\text{outcome}}$ rollouts, 84\% emit $\geq 2$ \texttt{<answer>} blocks; 490 emit a correct first equation and drift to a wrong final one --- the ``I had it, then I lost it'' pattern. At the wrong-final \texttt{<answer>} position, does the probe still encode the first answer's correctness (consistent with a ``knows but doesn't say'' framing), or has the representation moved with the new commit?
+Our eval sampling regime produced rollouts that often contained multiple \texttt{<answer>} blocks: of 6496 held-out $C_{\text{outcome}}$ rollouts, 84\% had $\geq 2$ blocks, of which 490 emit a correct first equation and ``drift'' to a wrong final one. This gives us a setting to test a sharper version of Q1: at the wrong-final \texttt{<answer>} position, does the probe still encode the \emph{first} answer's correctness (consistent with ``knows but doesn't say''), or has the representation moved with the new commit?
 
-Position-appropriate probe at L16 (diagonal AUROC 0.920):
+We train a position-appropriate probe directly on \texttt{<answer>}-opening hidden states (diagonal AUROC 0.920 at L16). Per-transition class, mean probe at the first vs.\ last commit:
 \begin{table}[h]
 \centering
 \small
@@ -120,10 +125,10 @@ TT both correct & 2983 & 0.874 & 0.823 & 1.00 & 1.00 \\
 FF both wrong & 1835 & 0.084 & 0.088 & 0.00 & 0.00 \\
 \bottomrule
 \end{tabular}
-\caption{Within-rollout probe trajectory. On T$\to$F drift, probe(last)$=0.154$ is statistically indistinguishable from the F$\to$F floor (0.088). The model truly commits to the wrong answer; there is no preserved hidden correctness signal. Bidirectional in F$\to$T.}
+\caption{Within-rollout probe trajectory. On T$\to$F drift rollouts, probe(last)$=0.154$ is statistically indistinguishable from the F$\to$F floor (0.088): the model's commit-time representation has moved to the wrong answer, with no preserved earlier signal. The same effect holds bidirectionally on F$\to$T rescue rollouts.}
 \end{table}
 
-This refutes the small-scale ``knows but doesn't say'' framing. Phase~2B (planned activation patching) was skipped per pre-registered gating: there is no preserved signal to inject.
+The model's representation at each commit tracks that commit's content. There is no preserved hidden correctness signal at the wrong-final position for a ``knows but doesn't say'' framing to point to. (Phase~2B activation patching was skipped per pre-registered gating: there is no preserved signal to inject.)
 
 \subsection{Causal Steering: The Probe is a Reader, Not a Controller}\label{sec:causal-steering}
 
@@ -150,7 +155,7 @@ The probe identifies a linear direction that \emph{predicts} correctness but is 
 
 \section{Applied Probe: Substantial Deployment-Time Value}
 
-The near-oracle probe enables several deployment-time improvements without retraining the model:
+The near-oracle probe enables several deployment-time improvements without retraining the model. We separate \emph{across-rollout} uses (multiple independent rollouts; probe selects among them) from \emph{within-rollout} uses (a single rollout contains multiple answer blocks; probe picks the best block):
 
 \begin{table}[h]
 \centering
@@ -159,19 +164,27 @@ The near-oracle probe enables several deployment-time improvements without retra
 \toprule
 Strategy & Accuracy & Lift vs.\ pass@1 \\
 \midrule
-pass@1 baseline (first rollout) & 0.549 & --- \\
+\multicolumn{3}{l}{\emph{Across-rollout (K=16 independent samples per prompt):}} \\
+pass@1 baseline (first rollout, verifier-scored) & 0.549 & --- \\
 best-of-16 (probe argmax) & 0.670 & $+12.1$\,pp \\
 \textbf{probe-restart} ($B{=}16$, $T{=}0.95$) & \textbf{0.675} & $+12.6$\,pp \textbf{at 6.3 avg rollouts ($-$60\% compute)} \\
-abstention at $\sim$50\% coverage ($T{=}0.86$) & 0.980 & --- (selective prediction) \\
-abstention at $\sim$33\% coverage ($T{=}0.98$) & 0.992 & --- \\
 probe-best majority hybrid (intersection) & 0.677 & $+12.8$\,pp \\
 adaptive budget at $K_{\text{avg}}{=}4$ & 0.830 & matches $K{=}16$ uniform \\
+abstention at $\sim$50\% coverage ($T{=}0.86$) & 0.980 & --- (selective prediction) \\
+abstention at $\sim$33\% coverage ($T{=}0.98$) & 0.992 & --- \\
+\midrule
+\multicolumn{3}{l}{\emph{Within-rollout (probe picks a block within a single multi-block rollout):}} \\
+verifier-default within multi-block rollout (last block) & 0.574 & --- \\
+oracle pick-first-correct (any block correct; upper bound) & 0.671 & $+9.7$\,pp \\
+\textbf{probe-commit (T=0.35, fallback=last)} & \textbf{0.661} & \textbf{$+8.7$\,pp} \\
 \bottomrule
 \end{tabular}
-\caption{Applied-probe results on $C_{\text{outcome}}$ held-out 406. Probe-guided restart matches best-of-16 accuracy with $\sim 60\%$ less compute. Adaptive budget allocation gives $+2.4$\,pp absolute over uniform at $K_{\text{avg}}{=}4$. Probe-mean estimates dataset accuracy within $\pm 0.4$\,pp (without verifier calls).}
+\caption{Applied-probe results on $C_{\text{outcome}}$ held-out 406. The probe is useful both in standard best-of-K (across independent rollouts) and within the multi-answer rollouts the model produces, picking the best block without any additional sampling cost.}
 \end{table}
 
 The probe's per-prompt mean across 16 rollouts correlates with per-prompt accuracy at Pearson $r{=}0.967$. A probe trained on $C_{\text{SFT}}$ activations transfers to $C_{\text{outcome}}$ with only 0.029 AUROC drop ($0.982 \to 0.953$) and $-1.8$\,pp best-of-16 selector lift --- the probe is largely checkpoint-invariant. Cross-scale, the same strategies generalize to 1.5B (AUROC 0.974, best-of-16 $+8.6$\,pp, abstention 93\% at 50\% coverage).
+
+\paragraph{An incidental use of the multi-block rollouts.} The within-rollout probe-commit row is a complement to best-of-K, not a replacement. Because the eval-time rollouts contain multiple candidate equations (\S\ref{sec:within-rollout}), we can rank them with the same probe and recover most of the achievable lift over the verifier's default last-block extraction (oracle ceiling 0.671; we hit 0.661). This gain costs no additional sampling --- it reuses candidates the rollout has already produced. Whether the underlying multi-answer emission is the model's intended behavior is a separate question; treated purely as ``free extra samples to pick from,'' it is unambiguously useful when paired with the probe.
 
 \section{Probe-as-RL-Reward Catastrophically Goodharts}\label{sec:probe-rl}
 
