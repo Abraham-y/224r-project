@@ -300,6 +300,38 @@ def run_prompt_difficulty(trainer_args: list[str]) -> str:
     volumes={str(REMOTE_VOLUME_ROOT): TRAINING_VOLUME},
     secrets=_build_secret_list(),
 )
+def run_probe_bestofk(trainer_args: list[str]) -> str:
+    # Offline probe best-of-K + top-M enrichment: held-out probe selection over
+    # existing rollouts. Shortest demo of the probe's strength + probe_topk preview.
+    return _run_training("extension/probe/probe_bestofk_offline.py", trainer_args)
+
+
+@app.function(
+    image=base_image,
+    gpu=GPU_CONFIG,
+    cpu=CPU_COUNT,
+    timeout=TIMEOUT_SECONDS,
+    startup_timeout=STARTUP_TIMEOUT_SECONDS,
+    volumes={str(REMOTE_VOLUME_ROOT): TRAINING_VOLUME},
+    secrets=_build_secret_list(),
+)
+def run_probe_usefulness_suite(trainer_args: list[str]) -> str:
+    # Bundled probe-usefulness suite: six experiments from one (or two) forward
+    # passes over C_outcome (and C_SFT for train-once transfer).
+    # Experiments: selective abstention, eval-proxy, scaling curve,
+    # vs-majority, train-once transfer, probe-weighted voting.
+    return _run_training("extension/probe/probe_usefulness_suite.py", trainer_args)
+
+
+@app.function(
+    image=base_image,
+    gpu=GPU_CONFIG,
+    cpu=CPU_COUNT,
+    timeout=TIMEOUT_SECONDS,
+    startup_timeout=STARTUP_TIMEOUT_SECONDS,
+    volumes={str(REMOTE_VOLUME_ROOT): TRAINING_VOLUME},
+    secrets=_build_secret_list(),
+)
 def run_eval(eval_args: list[str]) -> str:
     return _run_eval(eval_args)
 
@@ -454,7 +486,8 @@ def _build_parser() -> argparse.ArgumentParser:
             "cache_all_thinkclose", "firstanswer_rloo", "probe_reward_rloo",
             "probe_rloo", "ramble_penalty_rloo", "sft_probe_filtered",
             "probe_augmented_rloo",
-            "prompt_difficulty",
+            "prompt_difficulty", "probe_bestofk",
+            "probe_usefulness_suite",
         ),
     )
     parser.add_argument(
@@ -515,6 +548,10 @@ def main(*raw_args: str) -> None:
         call = run_probe_augmented_rloo.spawn(trainer_args)
     elif args.trainer == "prompt_difficulty":
         call = run_prompt_difficulty.spawn(trainer_args)
+    elif args.trainer == "probe_bestofk":
+        call = run_probe_bestofk.spawn(trainer_args)
+    elif args.trainer == "probe_usefulness_suite":
+        call = run_probe_usefulness_suite.spawn(trainer_args)
     else:
         call = run_rloo.spawn(trainer_args)
 
