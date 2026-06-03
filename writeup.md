@@ -1178,3 +1178,51 @@ The lesson is uncomfortable: when a published-style claim depends on a behaviora
 
 ---
 
+## 21. Probe-as-baseline (not probe-as-reward): a clean way to use a near-oracle critic in RL
+
+Co-author: **Anagha Ramaswamy** (`anagha-ramaswamy`). See [rloo_trainer/rloo_update_worker.py:243-260](rloo_trainer/rloo_update_worker.py#L243-L260) for the implementation and [extension/training/probe_reward_rloo.py](extension/training/probe_reward_rloo.py) for the trainer wrapper.
+
+§19 showed that using a near-oracle linear probe (AUROC 0.98) directly as the RLOO reward catastrophically Goodharts in both initialization regimes. The probe is gameable as a *target*. But the probe is also a *very accurate value estimator* — and in policy gradient, the canonical use for an accurate value estimator is the **baseline**, not the reward. This section describes a probe-as-baseline trainer that uses the probe correctly.
+
+### 21.1 The idea
+
+Standard RLOO uses the leave-one-out mean of the group's rewards as the per-rollout baseline:
+$$A_i = r_i - \frac{1}{G-1} \sum_{j \neq i} r_j$$
+where $r_j$ is the verifier reward in $\{0, 0.1, 1.0\}$. This is unbiased (the baseline doesn't depend on rollout $i$'s action) but high-variance: the group baseline is essentially a few discrete points away from the per-rollout reward.
+
+The probe-as-baseline variant replaces the baseline with the leave-one-out mean of *probe values*:
+$$A_i = r_i - \frac{1}{G-1} \sum_{j \neq i} v_\theta(s_j)$$
+where $v_\theta(s_j) \in [0,1]$ is the frozen near-oracle probe applied to rollout $j$'s `</think>` hidden state. The **reward stays the verifier** — the policy still optimizes the true reward, so there is no Goodhart. The baseline is now a smooth, low-variance estimate of expected reward (since the probe achieves AUROC 0.98 on the verifier-defined correctness label). Lower advantage variance → lower gradient variance → faster convergence in expectation.
+
+### 21.2 Why this avoids Goodhart
+
+In §19's probe-as-reward setup, the optimization target was `probe(rollout)`. The policy could maximize this by finding any feature the probe correlated with, regardless of true correctness. In probe-as-baseline, the optimization target is still `verifier(rollout)`. The probe enters only through the baseline, which is subtracted from $r_i$ but doesn't affect the optimization landscape — it only affects the variance of the advantage estimate.
+
+Formally, for any baseline $b(s)$ that doesn't depend on the current action,
+$$\mathbb{E}_{a \sim \pi}[\nabla_\theta \log \pi(a|s) \cdot (r(s,a) - b(s))] = \mathbb{E}_{a \sim \pi}[\nabla_\theta \log \pi(a|s) \cdot r(s,a)]$$
+The baseline's only role is variance reduction. Using a near-oracle critic as the baseline is the textbook variance-reduction strategy (cf. actor-critic methods); the novelty here is that we have an unusually good critic *without separately training one* — the linear probe trained for measurement work doubles as the critic.
+
+### 21.3 Implementation
+
+[rloo_trainer/rloo_update_worker.py](rloo_trainer/rloo_update_worker.py): the `update()` method accepts an optional `probe_baseline` array (per-rollout probe values). When provided, the LOO baseline is computed from probe values instead of rewards:
+```python
+if probe_baseline is not None:
+    grouped_pb = torch.as_tensor(probe_baseline, ...).view(-1, self.group_size)
+    pb_sum = grouped_pb.sum(dim=1, keepdim=True)
+    baseline = (pb_sum - grouped_pb) / (self.group_size - 1)
+else:
+    group_sum = grouped_rewards.sum(dim=1, keepdim=True)
+    baseline = (group_sum - grouped_rewards) / (self.group_size - 1)
+advantages = (grouped_rewards - baseline).reshape(-1)
+```
+
+[rloo_trainer/rloo.py](rloo_trainer/rloo.py): a `--probe_baseline` CLI flag toggles the path. When on, the trainer attaches a `probe_valuer` (frozen reference model + probe pkl) that scores each sampled rollout at the `</think>` token. The rest of the pipeline is unchanged.
+
+The trainer-side machinery (loading the frozen model, attaching the probe, computing `pv` per batch) is contained in [extension/training/probe_reward_rloo.py](extension/training/probe_reward_rloo.py) which also supports the §19-style probe-AS-reward arm; the `--probe_baseline` flag in `rloo.py` is the standalone baseline path.
+
+### 21.4 Status
+
+Code-complete, plumbing verified. A controlled comparison (vanilla outcome RLOO vs.\ probe-baseline RLOO from the same initialization, same seed, same compute) is the natural next experiment. The hypothesis is: equivalent or higher final accuracy at fewer training steps, with smoother per-step learning curves (lower advantage variance ⇒ less noisy gradient updates). Out of scope for this writeup; teed up for follow-up work.
+
+---
+

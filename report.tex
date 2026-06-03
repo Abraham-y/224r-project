@@ -20,7 +20,7 @@
 
 \title{Probing Correctness Representations in Outcome-RL'd Small Language Models:\\
 A Probe-as-Measurement Study with Honest Negative Results}
-\author{Abraham Yeung}
+\author{Abraham Yeung \and Anagha Ramaswamy}
 \date{June 2026 \\ Stanford CS 224R Project Report}
 
 \begin{document}
@@ -337,6 +337,20 @@ Each alone would be hard to find. Together they produced a clean, mechanisticall
 
 The unambiguous lesson: when a behavioral measurement depends on what the sampler reports, verify that the measurement reflects what the model is \emph{trying} to do, not just what comes out of the pipeline.
 
+\section{Probe-as-Baseline: A Correct Use of the Probe in RL}\label{sec:probe-baseline}
+
+§\ref{sec:probe-rl} showed that using the near-oracle probe as the RL reward catastrophically Goodharts. But policy gradient theory points to a different role for a good predictor: \emph{baseline}, not reward. We implemented this variant (contributed by co-author Anagha Ramaswamy; see \texttt{rloo\_trainer/rloo\_update\_worker.py}).
+
+\paragraph{The construction.} Standard RLOO uses the leave-one-out mean of group rewards as baseline:
+$$A_i = r_i - \frac{1}{G-1} \sum_{j \neq i} r_j$$
+We replace the baseline with the leave-one-out mean of \emph{probe values}:
+$$A_i = r_i - \frac{1}{G-1} \sum_{j \neq i} v_\theta(s_j)$$
+The reward $r_i$ stays the verifier; only the baseline changes. Since the baseline does not depend on rollout $i$'s action, this is unbiased \citep{williams1992simple, ahmadian2024back}. Because the probe is a near-oracle predictor of the verifier's reward (AUROC 0.982), the baseline is a much smoother and lower-variance estimate of expected reward than the discrete $\{0, 0.1, 1\}$ LOO baseline.
+
+\paragraph{Why this avoids Goodhart.} The optimization target is the verifier reward, unchanged from vanilla RLOO. The probe enters only through the baseline, which is a variance-reduction control variate, not a directional signal. The policy has no incentive to game the probe, because doing so does not increase $r_i$.
+
+\paragraph{Status.} The plumbing (\texttt{--probe\_baseline} flag, probe value computation per rollout, LOO baseline path) is in main. A controlled comparison against vanilla RLOO from the same initialization is the natural next experiment; out of scope for this report.
+
 \section{What Still Holds}
 
 \begin{itemize}[leftmargin=2em,itemsep=2pt,topsep=2pt]
@@ -391,6 +405,7 @@ A near-oracle internal verifier emerges at the trace-final position under outcom
 \bibitem{yuan2024probing} Yuan, J., et al.\ Probing the internal beliefs of language models. 2024.
 \bibitem{gandhi2024stream} Gandhi, K., et al.\ Stream of search: Learning to search in language. 2024.
 \bibitem{ahmadian2024back} Ahmadian, A., et al.\ Back to basics: Revisiting REINFORCE-style optimization for learning from human feedback in LLMs. ACL 2024 (RLOO).
+\bibitem{williams1992simple} Williams, R.\ J.\ Simple statistical gradient-following algorithms for connectionist reinforcement learning. \emph{Machine Learning}, 8(3):229--256, 1992.
 \end{thebibliography}
 
 \end{document}

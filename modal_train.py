@@ -190,21 +190,6 @@ def run_rloo(trainer_args: list[str]) -> str:
     volumes={str(REMOTE_VOLUME_ROOT): TRAINING_VOLUME},
     secrets=_build_secret_list(),
 )
-def run_probe_rloo(trainer_args: list[str]) -> str:
-    # RLOO with linear probe as the reward signal (instead of the verifier).
-    # See extension/training/probe_rloo.py docstring for details.
-    return _run_training("extension/training/probe_rloo.py", trainer_args)
-
-
-@app.function(
-    image=base_image,
-    gpu=GPU_CONFIG,
-    cpu=CPU_COUNT,
-    timeout=TIMEOUT_SECONDS,
-    startup_timeout=STARTUP_TIMEOUT_SECONDS,
-    volumes={str(REMOTE_VOLUME_ROOT): TRAINING_VOLUME},
-    secrets=_build_secret_list(),
-)
 def run_firstanswer_rloo(trainer_args: list[str]) -> str:
     # RLOO where the verifier scores the FIRST <answer> block instead of the
     # last. Text-based equivalent of probe-as-reward-shaping (the trace-final
@@ -221,10 +206,57 @@ def run_firstanswer_rloo(trainer_args: list[str]) -> str:
     volumes={str(REMOTE_VOLUME_ROOT): TRAINING_VOLUME},
     secrets=_build_secret_list(),
 )
+def run_probe_reward_rloo(trainer_args: list[str]) -> str:
+    # Reward-design ablation arm C: RLOO where the reward is the frozen probe's
+    # P(correct) read at </think> (L16) of a frozen C_SFT model, instead of the
+    # verifier. Tests whether the near-oracle internal probe survives as a
+    # *controller* (vs reader) or gets Goodhart-hacked.
+    return _run_training("extension/training/probe_reward_rloo.py", trainer_args)
+
+
+@app.function(
+    image=base_image,
+    gpu=GPU_CONFIG,
+    cpu=CPU_COUNT,
+    timeout=TIMEOUT_SECONDS,
+    startup_timeout=STARTUP_TIMEOUT_SECONDS,
+    volumes={str(REMOTE_VOLUME_ROOT): TRAINING_VOLUME},
+    secrets=_build_secret_list(),
+)
+def run_probe_rloo(trainer_args: list[str]) -> str:
+    # WITHDRAWN — see findings.md EXP-21. Kept for reproduction of the
+    # probe-as-reward Goodhart result (runA/runB).
+    return _run_training("extension/training/probe_rloo.py", trainer_args)
+
+
+@app.function(
+    image=base_image,
+    gpu=GPU_CONFIG,
+    cpu=CPU_COUNT,
+    timeout=TIMEOUT_SECONDS,
+    startup_timeout=STARTUP_TIMEOUT_SECONDS,
+    volumes={str(REMOTE_VOLUME_ROOT): TRAINING_VOLUME},
+    secrets=_build_secret_list(),
+)
 def run_ramble_penalty_rloo(trainer_args: list[str]) -> str:
-    # RLOO with first-block reward + per-extra-block ramble penalty. Tests
-    # whether rambling is load-bearing for accuracy or just SFT inertia.
+    # WITHDRAWN — see findings.md EXP-22. Confounded by training-time stop string.
     return _run_training("extension/training/ramble_penalty_rloo.py", trainer_args)
+
+
+@app.function(
+    image=base_image,
+    gpu=GPU_CONFIG,
+    cpu=CPU_COUNT,
+    timeout=TIMEOUT_SECONDS,
+    startup_timeout=STARTUP_TIMEOUT_SECONDS,
+    volumes={str(REMOTE_VOLUME_ROOT): TRAINING_VOLUME},
+    secrets=_build_secret_list(),
+)
+def run_prompt_difficulty(trainer_args: list[str]) -> str:
+    # Prompt-only difficulty probe: forward-pass prompts, predict per-problem
+    # pass rate from the LAST PROMPT TOKEN hidden state (input-time difficulty,
+    # pre-generation) vs a surface-feature control.
+    return _run_training("extension/probe/prompt_difficulty_probe.py", trainer_args)
 
 
 @app.function(
@@ -387,7 +419,9 @@ def _build_parser() -> argparse.ArgumentParser:
             "probe_cache", "elicit_confidence", "token_logprob_confidence",
             "sample_local", "cache_answers", "causal_steering",
             "probe_behavioral", "train_answer_probe",
-            "cache_all_thinkclose", "firstanswer_rloo", "probe_rloo", "ramble_penalty_rloo",
+            "cache_all_thinkclose", "firstanswer_rloo", "probe_reward_rloo",
+            "probe_rloo", "ramble_penalty_rloo",
+            "prompt_difficulty",
         ),
     )
     parser.add_argument(
@@ -436,10 +470,14 @@ def main(*raw_args: str) -> None:
         call = run_cache_all_thinkclose.spawn(trainer_args)
     elif args.trainer == "firstanswer_rloo":
         call = run_firstanswer_rloo.spawn(trainer_args)
+    elif args.trainer == "probe_reward_rloo":
+        call = run_probe_reward_rloo.spawn(trainer_args)
     elif args.trainer == "probe_rloo":
         call = run_probe_rloo.spawn(trainer_args)
     elif args.trainer == "ramble_penalty_rloo":
         call = run_ramble_penalty_rloo.spawn(trainer_args)
+    elif args.trainer == "prompt_difficulty":
+        call = run_prompt_difficulty.spawn(trainer_args)
     else:
         call = run_rloo.spawn(trainer_args)
 
