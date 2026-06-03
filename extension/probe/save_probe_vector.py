@@ -17,8 +17,10 @@ import json
 import os
 import warnings
 
+import joblib
 import numpy as np
 from sklearn.linear_model import LogisticRegression
+from sklearn.pipeline import Pipeline as SkPipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import roc_auc_score
 from sklearn.model_selection import GroupKFold
@@ -76,6 +78,14 @@ def main():
     print(f"wrote {out_path}")
     print(f"  v_unit shape: {w_unit.shape}, ||v_input||: {np.linalg.norm(w_input):.2f}")
     print(f"  mean hidden state L2 norm: {h_norm_mean:.2f}")
+
+    # Also save the full sklearn Pipeline (StandardScaler + LogisticRegression)
+    # so probe-augmented RLOO forward hooks can score raw hidden states directly
+    # with pipe.predict_proba(h) without needing to know about the scaler.
+    pipeline_path = os.path.join(OUT_DIR, f"{CKPT}_l{LAYER}_{KIND}_pipeline.pkl")
+    pipe = SkPipeline([("scaler", scaler), ("clf", clf)])
+    joblib.dump(pipe, pipeline_path)
+    print(f"wrote pipeline to {pipeline_path}")
 
 
 if __name__ == "__main__":
