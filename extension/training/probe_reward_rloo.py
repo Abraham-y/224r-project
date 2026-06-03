@@ -40,7 +40,8 @@ CLI (wrapper flags are consumed here; everything else passes through to rloo.py)
                           if omitted, the probe is trained at startup
   --probe_model PATH      frozen model for hidden states (default C_SFT)
   --probe_layer N         hidden layer index (default 16)
-  --reward_mode MODE      probe | probe_gated | blend   (default probe)
+  --reward_mode MODE      probe | probe_gated | blend | mult   (default probe)
+                          (mult: r = verifier * probe, bounded vs pure probe-as-reward)
   --blend_outcome W       weight on verifier reward when reward_mode=blend (default 0.3)
   --train_rollouts PATH   C_SFT rollouts to train the probe on (default eval_c_sft_n500.json)
   --probe_train_max N     cap on rollouts used to train the probe (default 3000)
@@ -300,6 +301,13 @@ def _make_probe_reward(tok, model, probe, layer, mode, blend, orig_compute_score
         if mode == "blend":
             v = float(orig_compute_score(solution_str, ground_truth))
             return (1.0 - blend) * p + blend * v
+        if mode == "mult":
+            # Verifier-anchored probe shaping: r = verifier * probe.
+            # Ceiling capped by verifier -> can't catastrophically Goodhart
+            # (probe=1 on wrong rollouts -> r=0.1*1=0.1; same as parseable-wrong).
+            # Shaping signal among correct rollouts: r=probe in [0,1].
+            v = float(orig_compute_score(solution_str, ground_truth))
+            return v * p
         return p
 
     probe_compute_score.__name__ = "compute_score"
