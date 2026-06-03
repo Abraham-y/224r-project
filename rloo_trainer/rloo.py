@@ -166,6 +166,7 @@ class RLOOTrainer:
             weight_decay=self.weight_decay,
             warmup_ratio=self.warmup_ratio,
             num_training_steps=self.num_training_steps,
+            probe_topk_M=getattr(self, "probe_topk_M", None),
         )
         ray.get(self.update_worker.load_checkpoint.remote())
         return self.update_worker
@@ -428,6 +429,11 @@ if __name__ == "__main__":
     parser.add_argument('--probe_value_rollouts', type=str, default='eval_c_sft_n500.json',
                         help="C_SFT rollouts to train the probe value on (if no --probe_value_pkl).")
     parser.add_argument('--probe_value_train_max', type=int, default=3000)
+    parser.add_argument('--probe_topk_M', type=int, default=None,
+                        help="If set with --probe_baseline, only the top-M (by probe value) "
+                             "of each group of group_size rollouts contributes to the gradient. "
+                             "Reward stays verifier; baseline is the standard LOO-over-rewards. "
+                             "Effect: probe-best-of-K rejection sampling during training.")
     parser.add_argument('--temperature', type=float, default=1.0)
     parser.add_argument('--top_p', type=float, default=1.0)
     parser.add_argument('--top_k', type=int, default=-1)
@@ -462,8 +468,10 @@ if __name__ == "__main__":
     _pb_layer = args.probe_value_layer
     _pb_rollouts = args.probe_value_rollouts
     _pb_train_max = args.probe_value_train_max
+    _pb_topk_M = args.probe_topk_M
     for _k in ("probe_baseline", "probe_value_model", "probe_value_pkl",
-               "probe_value_layer", "probe_value_rollouts", "probe_value_train_max"):
+               "probe_value_layer", "probe_value_rollouts", "probe_value_train_max",
+               "probe_topk_M"):
         delattr(args, _k)
 
     trainer = RLOOTrainer(
@@ -498,8 +506,13 @@ if __name__ == "__main__":
 
         trainer.probe_valuer = _ProbeValuer()
         trainer.probe_baseline = True
-        print("[probe_baseline] ACTIVE: advantage = R_verifier - LOO-mean(probe V@</think>). "
-              "Reward unchanged (verifier); reward_mean == true accuracy.", flush=True)
+        trainer.probe_topk_M = _pb_topk_M
+        if _pb_topk_M is not None:
+            print(f"[probe_topk] ACTIVE: only top-{_pb_topk_M} (by probe V@</think>) of each "
+                  f"group contributes to the gradient. Reward unchanged (verifier).", flush=True)
+        else:
+            print("[probe_baseline] ACTIVE: advantage = R_verifier - LOO-mean(probe V@</think>). "
+                  "Reward unchanged (verifier); reward_mean == true accuracy.", flush=True)
     else:
         trainer.probe_baseline = False
 
