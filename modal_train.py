@@ -252,6 +252,21 @@ def run_ramble_penalty_rloo(trainer_args: list[str]) -> str:
     volumes={str(REMOTE_VOLUME_ROOT): TRAINING_VOLUME},
     secrets=_build_secret_list(),
 )
+def run_sft_probe_filtered(trainer_args: list[str]) -> str:
+    # SFT on probe-filtered C_SFT rollouts (Option 1: probe-as-SFT-data-filter).
+    # Uses local JSONL prepared by extension/probe/build_probe_filtered_sft.py.
+    return _run_training("extension/training/sft_probe_filtered.py", trainer_args)
+
+
+@app.function(
+    image=base_image,
+    gpu=GPU_CONFIG,
+    cpu=CPU_COUNT,
+    timeout=TIMEOUT_SECONDS,
+    startup_timeout=STARTUP_TIMEOUT_SECONDS,
+    volumes={str(REMOTE_VOLUME_ROOT): TRAINING_VOLUME},
+    secrets=_build_secret_list(),
+)
 def run_prompt_difficulty(trainer_args: list[str]) -> str:
     # Prompt-only difficulty probe: forward-pass prompts, predict per-problem
     # pass rate from the LAST PROMPT TOKEN hidden state (input-time difficulty,
@@ -420,7 +435,7 @@ def _build_parser() -> argparse.ArgumentParser:
             "sample_local", "cache_answers", "causal_steering",
             "probe_behavioral", "train_answer_probe",
             "cache_all_thinkclose", "firstanswer_rloo", "probe_reward_rloo",
-            "probe_rloo", "ramble_penalty_rloo",
+            "probe_rloo", "ramble_penalty_rloo", "sft_probe_filtered",
             "prompt_difficulty",
         ),
     )
@@ -476,6 +491,8 @@ def main(*raw_args: str) -> None:
         call = run_probe_rloo.spawn(trainer_args)
     elif args.trainer == "ramble_penalty_rloo":
         call = run_ramble_penalty_rloo.spawn(trainer_args)
+    elif args.trainer == "sft_probe_filtered":
+        call = run_sft_probe_filtered.spawn(trainer_args)
     elif args.trainer == "prompt_difficulty":
         call = run_prompt_difficulty.spawn(trainer_args)
     else:
