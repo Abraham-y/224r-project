@@ -11,6 +11,7 @@ For each (ckpt, kind, layer) cell, compare:
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import re
@@ -26,6 +27,7 @@ from sklearn.metrics import roc_auc_score
 
 warnings.filterwarnings("ignore")
 
+# Defaults; can be overridden via CLI for the fixed-sampler replication.
 CACHE_DIR = "extension/cache/probe_cache_n500_clean406"
 EVAL = {
     "C_SFT": "eval_c_sft_n500.json",
@@ -53,7 +55,20 @@ def check_block(eq: str, target: int, nums: list[int]) -> bool:
 
 
 def main():
+    global CACHE_DIR, EVAL, OUT_TXT
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--cache_dir", default=CACHE_DIR)
+    ap.add_argument("--eval_sft", default=EVAL["C_SFT"])
+    ap.add_argument("--eval_outcome", default=EVAL["C_outcome"])
+    ap.add_argument("--out_txt", default=OUT_TXT)
+    args = ap.parse_args()
+    CACHE_DIR = args.cache_dir
+    EVAL = {"C_SFT": args.eval_sft, "C_outcome": args.eval_outcome}
+    OUT_TXT = args.out_txt
+
     from transformers import AutoTokenizer
+    print(f"[relabel-full] cache_dir = {CACHE_DIR}", flush=True)
+    print(f"[relabel-full] eval files = {EVAL}", flush=True)
     print("[relabel-full] loading tokenizers", flush=True)
     tok_sft = AutoTokenizer.from_pretrained("asingh15/qwen-sft-countdown-defaultproj", use_fast=True)
     tok_out = tok_sft  # same tokenizer

@@ -24,7 +24,15 @@ from sklearn.metrics import roc_auc_score
 
 warnings.filterwarnings("ignore")
 
-CACHE_DIR = "extension/cache/probe_cache_n500_clean406"
+import argparse as _argparse
+_ap = _argparse.ArgumentParser()
+_ap.add_argument("--cache_dir", default="extension/cache/probe_cache_n500_clean406")
+_ap.add_argument("--eval_sft", default=EVAL_SFT_PATH)
+_ap.add_argument("--eval_outcome", default=EVAL_OUT_PATH)
+_args, _unknown = _ap.parse_known_args()
+CACHE_DIR = _args.cache_dir
+EVAL_SFT_PATH = _args.eval_sft
+EVAL_OUT_PATH = _args.eval_outcome
 OUT = "extension/outputs/n500/text/40_relabel_cross_checkpoint.txt"
 _ANSWER_OPEN_RE = re.compile(r"<answer>(.*?)</answer>", re.DOTALL)
 
@@ -96,10 +104,10 @@ def balanced_auroc(y, sc, seed=0):
 
 
 def main():
-    labs_sft = first_block_labels("eval_c_sft_n500.json")
-    labs_out = first_block_labels("eval_c_outcome_n500.json")
-    eval_sft = [json.loads(l) for l in open("eval_c_sft_n500.json") if l.strip()]
-    eval_out = [json.loads(l) for l in open("eval_c_outcome_n500.json") if l.strip()]
+    labs_sft = first_block_labels(EVAL_SFT_PATH)
+    labs_out = first_block_labels(EVAL_OUT_PATH)
+    eval_sft = [json.loads(l) for l in open(EVAL_SFT_PATH) if l.strip()]
+    eval_out = [json.loads(l) for l in open(EVAL_OUT_PATH) if l.strip()]
     out_lines = ["Cross-checkpoint probe transfer matrix with CORRECTED labels",
                  "Position: L16; off-diagonals trained on full C_X, tested on C_Y",
                  ""]

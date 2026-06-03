@@ -267,6 +267,23 @@ def run_sft_probe_filtered(trainer_args: list[str]) -> str:
     volumes={str(REMOTE_VOLUME_ROOT): TRAINING_VOLUME},
     secrets=_build_secret_list(),
 )
+def run_probe_augmented_rloo(trainer_args: list[str]) -> str:
+    # Probe-augmented RLOO: A_i = R_i - LOO_{j!=i}[lam*R_j + (1-lam)*probe_j].
+    # Reward stays the verifier; probe is a control variate. Sweep lambda
+    # in {0.3, 0.5, 0.7} for three datapoints between pure probe baseline
+    # (Anagha's lam=0) and vanilla RLOO (lam=1).
+    return _run_training("extension/training/probe_augmented_rloo.py", trainer_args)
+
+
+@app.function(
+    image=base_image,
+    gpu=GPU_CONFIG,
+    cpu=CPU_COUNT,
+    timeout=TIMEOUT_SECONDS,
+    startup_timeout=STARTUP_TIMEOUT_SECONDS,
+    volumes={str(REMOTE_VOLUME_ROOT): TRAINING_VOLUME},
+    secrets=_build_secret_list(),
+)
 def run_prompt_difficulty(trainer_args: list[str]) -> str:
     # Prompt-only difficulty probe: forward-pass prompts, predict per-problem
     # pass rate from the LAST PROMPT TOKEN hidden state (input-time difficulty,
@@ -436,6 +453,7 @@ def _build_parser() -> argparse.ArgumentParser:
             "probe_behavioral", "train_answer_probe",
             "cache_all_thinkclose", "firstanswer_rloo", "probe_reward_rloo",
             "probe_rloo", "ramble_penalty_rloo", "sft_probe_filtered",
+            "probe_augmented_rloo",
             "prompt_difficulty",
         ),
     )
@@ -493,6 +511,8 @@ def main(*raw_args: str) -> None:
         call = run_ramble_penalty_rloo.spawn(trainer_args)
     elif args.trainer == "sft_probe_filtered":
         call = run_sft_probe_filtered.spawn(trainer_args)
+    elif args.trainer == "probe_augmented_rloo":
+        call = run_probe_augmented_rloo.spawn(trainer_args)
     elif args.trainer == "prompt_difficulty":
         call = run_prompt_difficulty.spawn(trainer_args)
     else:

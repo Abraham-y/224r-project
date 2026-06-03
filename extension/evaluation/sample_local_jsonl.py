@@ -81,6 +81,14 @@ def parse_args():
         help="Comma-separated extra token IDs to treat as stops. "
              "E.g. '151645' to also stop on <|im_end|>. Empty = default (eos_token_id only).",
     )
+    parser.add_argument(
+        "--stop_strings",
+        type=str,
+        default="",
+        help="Comma-separated substring stops (vLLM SamplingParams.stop). "
+             "E.g. '</answer>' to match the training-time RLOO sampler. "
+             "Empty = no string-based stops.",
+    )
     return parser.parse_args()
 
 
@@ -106,10 +114,13 @@ def main():
 
     extra_stops = [int(x) for x in args.extra_stop_token_ids.split(",") if x.strip()]
     stop_ids = [tokenizer.eos_token_id] + extra_stops
+    stop_strs = [s for s in args.stop_strings.split(",") if s.strip()]
     print(f"[eval] sampling will stop on token ids: {stop_ids} "
           f"(decoded: {[tokenizer.decode([i]) for i in stop_ids]!r})")
+    if stop_strs:
+        print(f"[eval] sampling will also stop on substrings: {stop_strs!r}")
 
-    sampling_params = SamplingParams(
+    sp_kwargs = dict(
         temperature=args.temperature,
         top_p=args.top_p,
         top_k=args.top_k,
@@ -118,6 +129,10 @@ def main():
         n=args.num_responses,
         stop_token_ids=stop_ids,
     )
+    if stop_strs:
+        sp_kwargs["stop"] = stop_strs
+        sp_kwargs["include_stop_str_in_output"] = True  # keep </answer> in the response text
+    sampling_params = SamplingParams(**sp_kwargs)
 
     prompts = [r["prompt"] for r in rows]
     print(f"[eval] generating {args.num_responses} responses per prompt "

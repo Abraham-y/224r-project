@@ -265,8 +265,20 @@ class RLOOUpdateWorker:
                 group_sum = grouped_rewards.sum(dim=1, keepdim=True)
                 baseline = (group_sum - grouped_rewards)/(self.group_size - 1)
             else:
-                pb_sum = grouped_pb.sum(dim=1, keepdim=True)
-                baseline = (pb_sum - grouped_pb)/(self.group_size - 1)
+                # Optional lambda-mix: baseline = LOO over (lam*R + (1-lam)*probe).
+                # lam=0 -> pure probe baseline (Anagha's original path).
+                # lam=1 -> vanilla RLOO LOO-over-rewards.
+                # lam in (0,1) -> smooth interpolation (set by probe_augmented_rloo.py
+                # via PROBE_AUG_LAMBDA env var, default 0.0 for backward compat).
+                import os as _os
+                _lam = float(_os.environ.get("PROBE_AUG_LAMBDA", "0.0"))
+                if _lam == 0.0:
+                    pb_sum = grouped_pb.sum(dim=1, keepdim=True)
+                    baseline = (pb_sum - grouped_pb)/(self.group_size - 1)
+                else:
+                    grouped_mix = _lam * grouped_rewards + (1.0 - _lam) * grouped_pb
+                    mix_sum = grouped_mix.sum(dim=1, keepdim=True)
+                    baseline = (mix_sum - grouped_mix)/(self.group_size - 1)
         else:
             group_sum = grouped_rewards.sum(dim=1, keepdim=True)
             baseline = (group_sum - grouped_rewards)/(self.group_size - 1)
