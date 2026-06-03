@@ -1151,6 +1151,17 @@ We re-ran eval on C_outcome and C_SFT with the fixed sampler. (See `eval_c_outco
 - At C_outcome under proper stop, `acc_first ≈ acc_last` (0.583 vs 0.607), as expected when most rollouts have one block. The 0.024 gap is the residual contribution from the 17% multi-block rollouts.
 - Caveat: bug-era evals were likely at temperature 0.6, while these fixed evals are at temperature 1.0. The accuracy comparisons are confounded by sampling temperature; the block-count comparisons are not (block count is a structural property at any temperature).
 
+### 20.3a Confirmation: RL shifted P(`<|im_end|>`) downward at C_outcome
+
+A direct forward-pass logit check at the post-`</answer>` position on the C_outcome step-90 checkpoint, same setup as §20.1:
+
+| Sample | C_SFT P(`<\|im_end\|>`) | C_outcome P(`<\|im_end\|>`) | Δ |
+|---|---|---|---|
+| 0 (833 tokens) | 0.9731 | **0.9624** | $-0.0107$ |
+| 1 (661 tokens) | 0.9732 | **0.9591** | $-0.0141$ |
+
+RL training pulls ~1.1–1.4% of probability mass away from the stop token. Per-rollout this is tiny, but it compounds across 16 rollouts × 500 prompts into the 17% multi-block rate we measured. This is the cleanest evidence that **the residual rambling at C_outcome under proper stopping is a real RL-induced distributional shift** — not the original "reward-hack" framing, but a genuine (small) effect on the model's unobserved post-`</answer>` distribution. The mechanism is parameter drift through the shared transformer parameters: RL's gradient updates on first-block tokens incidentally drag down the post-stop distribution's mass on `<|im_end|>`, because that token was never observed during training rollouts (vLLM stopped at `</answer>` before it could appear) and therefore has no preservation signal.
+
 ### 20.4 Implications for prior claims
 
 **Unaffected:**
@@ -1163,7 +1174,7 @@ We re-ran eval on C_outcome and C_SFT with the fixed sampler. (See `eval_c_outco
 **Affected:**
 - The rambling rate / position-gap correlation (r = +0.89 across snapshots, §2.2 / §7). The position-gap (a probe AUROC observation) is real, but the rambling rate it correlates with is largely artifactual. The correlation may still mean *something* (sampler-induced rambling growing under RL is itself a function of the policy's drift), but it is no longer the clean reward-hack signature we framed it as.
 - The "rambling reward-hack" framing throughout the writeup — withdrawn. The §18.10 firstanswer + EXP-22 ramble-penalty experiments were already withdrawn as confounded by the *training-time* stop string in the sampling worker (every training rollout has n_blocks=1, so the three rewards collapse). The *eval-time* `<|im_end|>` bug is an additional, simpler confound that further invalidates rambling as a behavioral target.
-- The "1.5B doesn't ramble" scale claim (§15.4) needs verification. The 1.5B model may use a different tokenizer config in which `<|im_end|>` is the actual `eos_token_id` — in which case vLLM correctly stops, and the "scale-dependence" is just "tokenizer-config-dependence." Not verified before paper submission.
+- The "1.5B doesn't ramble" scale claim (§15.4) — **partially verified**. The 1.5B SFT checkpoint's `tokenizer_config.json` has `eos_token = '<|endoftext|>'` (id 151643) — the SAME mismatch as 0.5B. So the bug is not eliminated by tokenizer config alone. This means the 0.075% multi-answer rate at 1.5B is a *genuine* model-level difference: at the post-`</answer>` position, the 1.5B model must place more probability on the actual EOS (151643) than the 0.5B model does. Why is open — could reflect the 1.5B SFT being undertrained (6 epochs at lr=1e-5; we did not match asingh15's recipe) so the model retains more of the base Qwen pre-training prior, which more often emits `<|endoftext|>` directly; or it could be a true capacity-related effect. The "scale-dependence" claim survives but its mechanism is unconfirmed.
 
 ### 20.5 The methodological lesson
 

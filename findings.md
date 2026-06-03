@@ -885,6 +885,17 @@ stop_token_ids=[tokenizer.eos_token_id, 151645]  # also stop on <|im_end|>
 - Accuracy comparisons confounded by sampling temperature (bug eval likely temp=0.6, fixed eval temp=1.0); the block-count comparison is robust to temperature.
 - The "rambling pathology" as originally framed (mean 7.6 blocks) was overwhelmingly bug-induced. A residual real phenomenon exists (1.83 vs 1.04 baseline) but it's about 1/5 the magnitude.
 
+**Direct mechanism confirmation (forward-pass on C_outcome step 90).** Same setup as the C_SFT logit check; 2 samples:
+
+| Sample | C_SFT P(`<\|im_end\|>`) | C_outcome P(`<\|im_end\|>`) | Δ |
+|---|---|---|---|
+| 0 | 0.9731 | **0.9624** | $-0.0107$ |
+| 1 | 0.9732 | **0.9591** | $-0.0141$ |
+
+RL pulled ~1.1-1.4% of probability mass away from `<|im_end|>` at C_outcome. Per-rollout this is small but compounds across the 8000 rollouts into the observed 17% multi-block rate. This is the cleanest mechanism evidence: RL's gradient updates on first-block tokens (the only tokens it directly observes during rollouts, thanks to the `stop=["</answer>"]` training stop) drag down the parameters that determine post-`</answer>` behavior, including the `<|im_end|>` probability. There is no preservation signal for this token because RL never saw it emitted.
+
+**1.5B tokenizer confirmation.** The 1.5B SFT checkpoint's `tokenizer_config.json` shows `eos_token = '<|endoftext|>'` (id 151643) — the SAME mismatch as 0.5B. So the "1.5B doesn't ramble" claim is NOT a tokenizer-config artifact: it's a genuine model-level difference (1.5B places more probability on the true EOS 151643 than 0.5B does). Why is open; the 1.5B SFT was undertrained relative to 0.5B's recipe (6 epochs at lr=1e-5) so it may retain more of the base Qwen pre-training prior at this position.
+
 **Methodological takeaway.** Three stacked confounds (training-time stop string, eval-time eos_token_id mismatch, decode-time `skip_special_tokens=True`) made the rambling story look clean and mechanistically interesting while being entirely wrong. A 5-minute forward-pass argmax check at the relevant token position would have caught the eval-time bug before any of EXP-19 / EXP-22 was launched. This is the unambiguous methodological lesson of the project.
 
 **Outputs.**

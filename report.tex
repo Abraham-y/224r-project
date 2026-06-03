@@ -305,6 +305,26 @@ probe-RL \texttt{runB} & 7947 & 0.1\% & 92.6\% & 1.6\% \\
 \caption{Post-\texttt{</answer>} classification across all checkpoints, 8000 rollouts each.}
 \end{table}
 
+\subsection{Direct Mechanism Confirmation}\label{sec:c-outcome-logits}
+
+A direct forward-pass logit check on the $C_{\text{outcome}}$ step-90 checkpoint at the post-\texttt{</answer>} position, same setup as $C_{\text{SFT}}$:
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{lccc}
+\toprule
+Sample & $C_{\text{SFT}}$ P(\texttt{<|im\_end|>}) & $C_{\text{outcome}}$ P(\texttt{<|im\_end|>}) & $\Delta$ \\
+\midrule
+0 (833 tokens) & 0.9731 & \textbf{0.9624} & $-0.0107$ \\
+1 (661 tokens) & 0.9732 & \textbf{0.9591} & $-0.0141$ \\
+\bottomrule
+\end{tabular}
+\caption{RL pulled $\sim$1.1--1.4\% of probability mass away from \texttt{<|im\_end|>} at $C_{\text{outcome}}$. Compounded across 8000 rollouts this produces the observed 17\% multi-block rate (vs.\ C\_SFT's 4\% under the fixed sampler). The 1.5B SFT checkpoint's \texttt{tokenizer\_config.json} shows the same \texttt{eos\_token\_id} mismatch as 0.5B, ruling out a tokenizer-config artifact for the ``1.5B doesn't ramble'' claim.}
+\end{table}
+
+The mechanism is parameter drift through the shared transformer parameters: RL's gradient updates on the only tokens it directly observes (\texttt{<think>} content through the first \texttt{</answer>}) incidentally shift the model's distribution at unobserved positions, including the post-\texttt{</answer>} \texttt{<|im\_end|>} probability. There is no preservation signal for this token because RL never sees it emitted.
+
 \subsection{The Rambling Story Collapses}
 
 What we measured as ``rambling'' at $C_{\text{outcome}}$ (7.6 blocks) and reported as a reward-hack reflects: (a) the model emitting \texttt{<|im\_end|>}, (b) vLLM passing through it, (c) the model in OOD state most likely producing \texttt{\textbackslash n<think>Let me verify\dots} (the SFT prior's most-probable ``fresh context'' continuation), (d) that continuation containing another \texttt{<answer>} block, (e) the cycle repeating until \texttt{max\_tokens}.
