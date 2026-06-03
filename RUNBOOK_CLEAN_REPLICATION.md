@@ -261,6 +261,68 @@ LOO over probe-values has some bias issue we missed.
 
 ---
 
+## Step 4b (alternate): probe-best-of-K RLOO (the capstone bridge experiment)
+
+If you only have time/credits for ONE more RL run, prefer this over the
+lambda-mix sweep in step 4. Rationale: probe-best-of-K is the only RL use
+case with *offline* evidence it will help (probe enriches top-M by a real
+factor in cached rollouts), and it cleanly bridges the deployment-side
+"probe is a reader for selection" story (best-of-K = +22.9 pp) to the
+training-side "what happens when we use the same probe to select training
+rollouts?" question. Either outcome (it works / it doesn't) is publishable.
+
+Code is already in main (rloo_trainer/rloo_update_worker.py probe_topk_M
+masking branch; rloo_trainer/rloo.py --probe_topk_M flag). To launch a full
+run from C_SFT:
+
+```bash
+set -a; source .env; set +a
+
+modal run --detach modal_train.py rloo -- \
+  --model_name asingh15/qwen-sft-countdown-defaultproj \
+  --ref_model_name asingh15/qwen-sft-countdown-defaultproj \
+  --tokenizer_name asingh15/qwen-sft-countdown-defaultproj \
+  --wandb_project rloo_probe_topk_0.5b \
+  --wandb_name probe_topk4_csft_FULL \
+  --save_dir /vol/checkpoints/rloo_probe_topk_checkpoints \
+  --batch_size 128 \
+  --group_size 8 \
+  --gradient_accumulation_steps 128 \
+  --num_training_steps 100 \
+  --save_every_n_steps 10 \
+  --warmup_ratio 0 \
+  --lr_schedule constant \
+  --probe_baseline \
+  --probe_topk_M 4
+```
+
+Cost: ~$30, ~5h. The trainer prints:
+```
+[probe_topk] ACTIVE: only top-4 (by probe V@</think>) of each group contributes to the gradient. Reward unchanged (verifier).
+```
+
+After it finishes, eval with the fixed sampler:
+```bash
+modal run --detach modal_train.py sample_local -- \
+  --model_path /vol/checkpoints/rloo_probe_topk_checkpoints/rloo_probe_topk_0.5b/probe_topk4_csft_FULL/latest_checkpoint/model \
+  --input_jsonl /root/default_proj/extension/data/countdown_eval_500.jsonl \
+  --output_json /vol/evaluation/eval_results/eval_probe_topk4_FULL_n500.json \
+  --num_responses 16 --max_prompts 500 \
+  --temperature 0.6 --top_p 0.95 --top_k 20 \
+  --stop_strings '</answer>'
+```
+
+What to compare:
+- vanilla C_outcome pass@1 (fixed sampler): ~0.55
+- probe_topk_M=4 pass@1: ??? (this experiment)
+
+A positive lift (probe_topk > vanilla) would close the loop: the same probe
+that powers best-of-K at deployment also powers selection-during-training.
+A null (probe_topk ≈ vanilla) would mean test-time selection is the probe's
+only useful contribution, which is still a clean story.
+
+---
+
 ## Step 7: optional -- causal steering on each checkpoint
 
 For the report's "reader/writer asymmetry" story, run causal steering on
