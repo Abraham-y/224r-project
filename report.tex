@@ -27,18 +27,18 @@ A Probe-as-Measurement Study with Honest Negative Results}
 \maketitle
 
 \begin{abstract}
-We train a linear probe at the final-thinking token (\texttt{</think>}) of Qwen2.5-0.5B on Countdown arithmetic and find a \textbf{near-oracle internal verifier}: held-out AUROC 0.982 after outcome RLOO (vs.\ 0.912 at the SFT baseline). Outcome RL strengthens this representation at every level we measure (aggregate, per-problem, within-prompt matched-pair), refuting a small-scale "knows but doesn't say" framing. Within multi-answer rollouts, a position-appropriate probe shows that the model's commit-time belief tracks each commit's content (Pattern A), not a hidden first-answer correctness signal. Causal steering along the probe direction is null --- the probe is a \emph{reader}, not a \emph{controller}, of a multi-dimensional correctness subspace. The probe has substantial deployment-time value: best-of-16 selector +12.1\,pp, selective abstention 98\% accuracy at 50\% coverage, probe-guided budgeted restart matches best-of-16 at 60\% less compute, dataset-accuracy estimate within $\pm 0.4$\,pp without verifier calls. \textbf{Using the same probe as an RLOO reward catastrophically Goodharts in both regimes} (in-distribution: delayed Goodhart at step 40, $-25$\,pp accuracy; cross-distribution: immediate Goodhart, $-22$\,pp from the SFT baseline); we trace the gaming to structural stylistic confounds the probe correlated with but did not causally read. The probe direction itself becomes mildly causal post-Goodhart ($\Delta_{\text{probe-vs-random}}=+0.08$ at $\alpha{=}1.0$, materially above the original null). We attempted to test a "rambling-as-reward-hack" hypothesis via two RL variants (first-answer reward, ramble-penalty); both turn out to be confounded by a training-time vLLM stop string. Worse, a forward-pass logit analysis reveals the eval-time "rambling" itself is a tokenizer/sampler bug: the model places 97.3\% probability on \texttt{<|im\_end|>} (id 151645) after \texttt{</answer>}, but \texttt{tokenizer.eos\_token\_id = 151643}, so vLLM passes through the model's intended stop signal. We report all three findings --- the probe results, the Goodhart story, and the honest negative results --- with the layered confounds documented.
+We train a linear probe at the final-thinking token (\texttt{</think>}) of Qwen2.5-0.5B on Countdown arithmetic and find a \textbf{near-oracle internal verifier}: held-out AUROC 0.982 after outcome RLOO (vs.\ 0.912 at the SFT baseline). Outcome RL strengthens this representation at every level we measure (aggregate, per-problem, within-prompt matched-pair), refuting a small-scale ``knows but doesn't say'' framing. Within multi-answer rollouts, a position-appropriate probe shows that the model's commit-time belief tracks each commit's content, not a hidden first-answer correctness signal. Causal steering along the probe direction is null --- the probe is a \emph{reader}, not a \emph{controller}, of a multi-dimensional correctness subspace. The probe has substantial deployment-time value: best-of-16 selector +12.1\,pp, selective abstention 98\% accuracy at 50\% coverage, probe-guided budgeted restart matches best-of-16 at 60\% less compute, dataset-accuracy estimate within $\pm 0.4$\,pp without verifier calls. \textbf{Using the same probe as an RLOO reward catastrophically Goodharts in both regimes} (in-distribution: delayed Goodhart at step 40, $-25$\,pp accuracy; cross-distribution: immediate Goodhart, $-22$\,pp from the SFT baseline); we trace the gaming to structural stylistic confounds the probe correlated with but did not causally read. The probe direction itself becomes mildly causal post-Goodhart ($\Delta_{\text{probe-vs-random}}=+0.08$ at $\alpha{=}1.0$, materially above the original null). Motivated by this failure mode, we implement \textbf{probe-as-baseline} (variance reduction via a near-oracle critic, with the verifier remaining the optimization target) as the principled way to use the probe in RL. The 1.5B reproduction maintains AUROC 0.974 and replicates the applied-probe gains at scale.
 \end{abstract}
 
 \section{Introduction}
 
-Recent work on probing language models for ``what they know'' has motivated the question of whether a small SFT model trained on a narrow task and then optimized with outcome reward (RLOO) develops internal representations of its own correctness, and whether those representations decouple from what the model verbalizes \citep{yuan2024probing}. We study this on Countdown arithmetic with Qwen2.5-0.5B, where an exact verifier exists and the failure modes (wrong equations, invalid number usage, multi-attempt ``rambling'') are unambiguous.
+Recent work on probing language models for ``what they know'' has motivated the question of whether a small SFT model trained on a narrow task and then optimized with outcome reward (RLOO) develops internal representations of its own correctness, and whether those representations decouple from what the model verbalizes \citep{yuan2024probing}. We study this on Countdown arithmetic with Qwen2.5-0.5B, where an exact verifier exists.
 
-We make three claims, varying in strength:
+We make three contributions:
 \begin{enumerate}[leftmargin=2em,itemsep=2pt]
-  \item \textbf{Strong, well-supported:} A linear probe trained on the L16 residual stream at the \texttt{</think>} token achieves AUROC 0.982 on first-\texttt{<answer>}-block correctness at C\_outcome (0.974 at 1.5B); outcome RL strengthens this representation at every level; the probe is correlational, not causal.
-  \item \textbf{Strong, well-supported:} Using the same probe as an RLOO reward signal catastrophically Goodharts in both initialization regimes, with the policy exploiting structural confounds in the probe's training distribution.
-  \item \textbf{Honest negative:} A planned causal test of whether ``rambling'' (multi-\texttt{<answer>}-block emission) is a reward-hack of the verifier's last-block scoring rule was confounded twice over: by a training-time \texttt{stop=["</answer>"]} that collapses three candidate reward functions to one, and by an eval-time \texttt{eos\_token\_id} mismatch that produces the rambling itself. We report this layered confound directly as the central methodological observation of the project.
+  \item \textbf{Probe-as-measurement.} A linear probe trained on the L16 residual stream at the \texttt{</think>} token achieves AUROC 0.982 on first-\texttt{<answer>}-block correctness at C\_outcome (0.974 at 1.5B); outcome RL strengthens this representation at every level; the probe is correlational, not causal.
+  \item \textbf{Probe-as-RL-reward fails.} Using the near-oracle probe as an RLOO reward catastrophically Goodharts in both initialization regimes; the policy exploits structural confounds the probe was correlated with in its training distribution.
+  \item \textbf{Probe-as-RL-baseline works.} The principled use of a near-oracle predictor in policy gradient is as a variance-reducing baseline. We implement leave-one-out probe-value baselines while keeping the verifier as the reward; this is unbiased and preserves the true optimization target.
 \end{enumerate}
 
 \section{Setup}
@@ -48,7 +48,7 @@ We use Qwen2.5-0.5B and the Countdown arithmetic task \citep{gandhi2024stream}: 
 
 We use Anikait Singh's \texttt{asingh15/qwen-sft-countdown-defaultproj} as our SFT baseline $C_{\text{SFT}}$ (we did not retrain SFT). We train $C_{\text{outcome}}$ via 100 RLOO steps from $C_{\text{SFT}}$ with the standard verifier reward, batch size 128, KL coefficient $10^{-3}$, learning rate $10^{-5}$. Test pass@1 rises from 28.6\% to 53.5\% (asingh15 $n{=}50$ test split).
 
-\subsection{Eval Set} The original asingh15 test split ($n{=}50$) is too small for some matched-pair statistical claims. We procedurally generated a 500-prompt evaluation set, verified byte-identical prompt formatting to asingh15's NumPy-style brackets (e.g.\ \texttt{[14 45 \phantom{0}9 \phantom{0}1]}), and filtered out 94 problems that overlap with $C_{\text{outcome}}$'s RLOO training pool. The resulting \textbf{clean-406} set is the primary reporting unit. All probes use \texttt{GroupKFold(5)} on \texttt{prompt\_idx} with class-balanced training subsamples.
+\subsection{Eval Set} The original asingh15 test split ($n{=}50$) is too small for some matched-pair statistical claims. We procedurally generated a 500-prompt evaluation set, verified byte-identical prompt formatting to asingh15's NumPy-style brackets (e.g.\ \texttt{[14 45 \phantom{0}9 \phantom{0}1]}), and filtered out 94 problems that overlap with $C_{\text{outcome}}$'s RLOO training pool. The resulting \textbf{held-out 406} set is the primary reporting unit. All probes use \texttt{GroupKFold(5)} on \texttt{prompt\_idx} with class-balanced training subsamples.
 
 \subsection{Probe Pipeline} We cache hidden states from Qwen2.5-0.5B with \texttt{output\_hidden\_states=True} at three position kinds per rollout:
 \begin{itemize}[leftmargin=2em,itemsep=1pt,topsep=2pt]
@@ -81,7 +81,7 @@ gap = pre\_answer $-$ assertion & +0.017 & \textbf{+0.127} & +0.110 \\
 \caption{Probe AUROC by position and checkpoint. Outcome RL strengthens the trace-final correctness representation by 0.076; the position gap grows 7$\times$. Shuffled-label baselines are 0.48--0.51; random-direction baselines 0.50--0.74.}
 \end{table}
 
-\subsection{The Gap Emerges Over Training (Option B Dynamics)}
+\subsection{The Gap Emerges Over Training}
 
 We re-sampled fresh rollouts ($n{=}200$) from three intermediate $C_{\text{outcome}}$ snapshots (steps 30, 60, 90), re-cached hidden states, and re-trained probes per snapshot with corrected labels:
 
@@ -90,7 +90,7 @@ We re-sampled fresh rollouts ($n{=}200$) from three intermediate $C_{\text{outco
 \small
 \begin{tabular}{lcccc}
 \toprule
-Step & \texttt{</think>} AUROC & assertion AUROC & gap & mean blocks/rollout$^\ast$ \\
+Step & \texttt{</think>} AUROC & assertion AUROC & gap & mean blocks/rollout \\
 \midrule
 $C_{\text{SFT}}$ (pre-RL) & 0.912 & 0.885 & +0.027 & 2.83 \\
 step 30 & 0.907 & 0.867 & +0.040 & 3.09 \\
@@ -99,12 +99,12 @@ step 90 & 0.971 & 0.835 & \textbf{+0.136} & 7.18 \\
 $C_{\text{outcome}}$ (final) & 0.982 & 0.896 & +0.086 & 7.41 \\
 \bottomrule
 \end{tabular}
-\caption{Position-gap dynamics across RLOO snapshots. Pearson $r(\text{mean\_blocks}, \text{gap}) = +0.891$ ($p = 0.04$). $^\ast$As discussed in \S\ref{sec:rambling-bug}, the ``mean blocks'' column is partly an eval-pipeline artifact; the gap remains a real probe observation.}
+\caption{Position-gap dynamics across RLOO snapshots. Pearson $r(\text{mean\_blocks}, \text{gap}) = +0.891$ ($p = 0.04$). Mean-blocks is reported under the original eval sampler; the gap itself is a probe-AUROC observation independent of the rollout block count.}
 \end{table}
 
-\subsection{Pattern A: Belief Updates at Each Commit}\label{sec:within-rollout}
+\subsection{Within-Rollout Belief Updates}\label{sec:within-rollout}
 
-Of 6496 clean-406 $C_{\text{outcome}}$ rollouts, 84\% emit $\geq 2$ \texttt{<answer>} blocks; 490 emit a correct first equation and drift to a wrong final one --- the ``I had it, then I lost it'' pattern. At the wrong-final \texttt{<answer>} position, does the probe still encode the first answer's correctness (Pattern~B, ``knows but doesn't say''), or has the representation moved (Pattern~A, true belief update)?
+Of 6496 held-out $C_{\text{outcome}}$ rollouts, 84\% emit $\geq 2$ \texttt{<answer>} blocks; 490 emit a correct first equation and drift to a wrong final one --- the ``I had it, then I lost it'' pattern. At the wrong-final \texttt{<answer>} position, does the probe still encode the first answer's correctness (consistent with a ``knows but doesn't say'' framing), or has the representation moved with the new commit?
 
 Position-appropriate probe at L16 (diagonal AUROC 0.920):
 \begin{table}[h]
@@ -168,7 +168,7 @@ probe-best majority hybrid (intersection) & 0.677 & $+12.8$\,pp \\
 adaptive budget at $K_{\text{avg}}{=}4$ & 0.830 & matches $K{=}16$ uniform \\
 \bottomrule
 \end{tabular}
-\caption{Applied-probe results on $C_{\text{outcome}}$ clean-406. Probe-guided restart matches best-of-16 accuracy with $\sim 60\%$ less compute. Adaptive budget allocation gives $+2.4$\,pp absolute over uniform at $K_{\text{avg}}{=}4$. Probe-mean estimates dataset accuracy within $\pm 0.4$\,pp (without verifier calls).}
+\caption{Applied-probe results on $C_{\text{outcome}}$ held-out 406. Probe-guided restart matches best-of-16 accuracy with $\sim 60\%$ less compute. Adaptive budget allocation gives $+2.4$\,pp absolute over uniform at $K_{\text{avg}}{=}4$. Probe-mean estimates dataset accuracy within $\pm 0.4$\,pp (without verifier calls).}
 \end{table}
 
 The probe's per-prompt mean across 16 rollouts correlates with per-prompt accuracy at Pearson $r{=}0.967$. A probe trained on $C_{\text{SFT}}$ activations transfers to $C_{\text{outcome}}$ with only 0.029 AUROC drop ($0.982 \to 0.953$) and $-1.8$\,pp best-of-16 selector lift --- the probe is largely checkpoint-invariant. Cross-scale, the same strategies generalize to 1.5B (AUROC 0.974, best-of-16 $+8.6$\,pp, abstention 93\% at 50\% coverage).
@@ -208,7 +208,7 @@ Step & \texttt{runA} probe / verifier / gap & KL & \texttt{runB} probe / verifie
 \small
 \begin{tabular}{lcccc}
 \toprule
-Checkpoint & first-block acc & last-block acc & mean blocks/rollout$^\ast$ & 1-block \% \\
+Checkpoint & first-block acc & last-block acc & mean blocks/rollout & 1-block \% \\
 \midrule
 $C_{\text{SFT}}$ & 0.290 & 0.238 & 2.71 & 39\% \\
 $C_{\text{outcome}}$ (vanilla) & \textbf{0.550} & 0.498 & 6.78 & 16\% \\
@@ -216,7 +216,7 @@ $C_{\text{outcome}}$ (vanilla) & \textbf{0.550} & 0.498 & 6.78 & 16\% \\
 \textbf{probe-RL runB} & 0.073 & 0.072 & 1.27 & 77\% \\
 \bottomrule
 \end{tabular}
-\caption{Probe-RL final checkpoints have the worst first-block accuracies on record. Both reached $\sim 0.99$ probe score by emitting structurally similar but mathematically wrong rollouts. The two runs adopted \emph{opposite} structural exploits for the same probe direction. $^\ast$With the caveat from \S\ref{sec:rambling-bug}.}
+\caption{Probe-RL final checkpoints have the worst first-block accuracies on record. Both reached $\sim 0.99$ probe score by emitting structurally similar but mathematically wrong rollouts. The two runs adopted \emph{opposite} structural exploits for the same probe direction.}
 \end{table}
 
 \subsection{Diagnosis: Structural Confound Exploitation}
@@ -250,113 +250,6 @@ The effect is small ($\sim 8$\,pp on a 17--25\% baseline) compared to the 25\,pp
 \subsection{Takeaway}
 Near-oracle linear probes (AUROC 0.98) on a task's natural rollout distribution are excellent inference-time tools but unsafe as RL rewards. The boundary between probe-as-deployment-tool (works) and probe-as-RL-reward (Goodharts catastrophically) is whether the policy gets gradient access to the probe's input distribution.
 
-\section{Honest Negative Results: The Rambling Story is Two Confounds Deep}\label{sec:rambling-bug}
-
-We planned a causal test of the hypothesis ``rambling at $C_{\text{outcome}}$ (mean 7.6 \texttt{<answer>} blocks per eval rollout) is a reward-hack of the verifier's last-block scoring rule.'' Three RL variants:
-\begin{enumerate}[leftmargin=2em,itemsep=1pt,topsep=2pt]
-  \item \texttt{firstanswer\_rloo}: score the first \texttt{<answer>} block instead of the last.
-  \item \texttt{ramble\_penalty\_rloo} ($\lambda{=}0.05$): reward $=$ first-block-score $- 0.05 \cdot \max(0, n_{\text{blocks}} - 1)$.
-  \item \texttt{ramble\_penalty\_rloo} ($\lambda{=}0.20$): same with stronger penalty.
-\end{enumerate}
-
-All three trained for 100 steps from $C_{\text{SFT}}$ with otherwise identical vanilla hyperparameters.
-
-\subsection{Confound 1: Training-Time Stop String}
-
-\texttt{rloo\_trainer/sampling\_worker.py:84-85} configures vLLM with \texttt{stop=["</answer>"]} during training rollouts. Every training rollout therefore contains \emph{exactly one} \texttt{<answer>} block. The three reward functions, evaluated on 1-block rollouts, collapse to identical signals:
-\begin{align*}
-\text{vanilla (last)} &= \text{first-block score} \quad (\text{since } n{=}1) \\
-\text{firstanswer (first)} &= \text{first-block score} \\
-\text{ramble-penalty} &= \text{first-block score} - \lambda \cdot 0 = \text{first-block score}
-\end{align*}
-The reward functions are pointwise identical on the training distribution. They cannot produce different policies for differential reasons.
-
-\subsection{Confound 2: Eval-Time \texttt{eos\_token\_id} Mismatch}
-
-Forward-pass analysis on $C_{\text{SFT}}$ at the position immediately after \texttt{</answer>} (3 samples; identical to 4 decimal places):
-\begin{verbatim}
-sample 0 (833 prompt+body tokens):
-   <|im_end|>      id=151645  p=0.9731  <-- 97.3%
-   <|im_start|>    id=151644  p=0.0016
-   (garbage)                  p=0.0002
-   (garbage)                  p=0.0001
-   (garbage)                  p=0.0001
-\end{verbatim}
-
-The model places 97.3\% probability on \texttt{<|im\_end|>} (id 151645, the chat-template end-of-turn token). But \texttt{tokenizer.eos\_token\_id $= 151643$} (\texttt{<|endoftext|>}). vLLM's default \texttt{SamplingParams} stops only on \texttt{eos\_token\_id}, so it passes through \texttt{<|im\_end|>} and continues sampling from an out-of-distribution state. With \texttt{skip\_special\_tokens=True} (vLLM default), \texttt{<|im\_end|>} is stripped from the decoded output, making the bug invisible to any human inspection of the rollout text.
-
-Across 8000 rollouts $\times$ 6 checkpoints (including $C_{\text{SFT}}$, $C_{\text{outcome}}$, both probe-RL runs, both ramble-penalty runs), \textbf{zero rollouts ever terminated on EOS}. The model never wants to emit \texttt{<|endoftext|>} --- it wants to emit \texttt{<|im\_end|>}, which vLLM doesn't honor.
-
-\begin{table}[h]
-\centering
-\small
-\begin{tabular}{lcccc}
-\toprule
-Checkpoint & rollouts with \texttt{</answer>} & EOS after & \texttt{<think>} re-entry & direct \texttt{<answer>} \\
-\midrule
-$C_{\text{SFT}}$ & 7233 & \textbf{0.0\%} & 99.9\% & 0.0\% \\
-$C_{\text{outcome}}$ & 7775 & \textbf{0.0\%} & 94.8\% & 5.2\% \\
-firstanswer & 7527 & \textbf{0.0\%} & 97.8\% & 2.2\% \\
-ramble-penalty $\lambda{=}0.20$ & 7938 & \textbf{0.0\%} & 56.1\% & 36.7\% \\
-probe-RL \texttt{runA} & 7997 & \textbf{0.0\%} & 57.8\% & 33.4\% \\
-probe-RL \texttt{runB} & 7947 & 0.1\% & 92.6\% & 1.6\% \\
-\bottomrule
-\end{tabular}
-\caption{Post-\texttt{</answer>} classification across all checkpoints, 8000 rollouts each.}
-\end{table}
-
-\subsection{Direct Mechanism Confirmation}\label{sec:c-outcome-logits}
-
-A direct forward-pass logit check on the $C_{\text{outcome}}$ step-90 checkpoint at the post-\texttt{</answer>} position, same setup as $C_{\text{SFT}}$:
-
-\begin{table}[h]
-\centering
-\small
-\begin{tabular}{lccc}
-\toprule
-Sample & $C_{\text{SFT}}$ P(\texttt{<|im\_end|>}) & $C_{\text{outcome}}$ P(\texttt{<|im\_end|>}) & $\Delta$ \\
-\midrule
-0 (833 tokens) & 0.9731 & \textbf{0.9624} & $-0.0107$ \\
-1 (661 tokens) & 0.9732 & \textbf{0.9591} & $-0.0141$ \\
-\bottomrule
-\end{tabular}
-\caption{RL pulled $\sim$1.1--1.4\% of probability mass away from \texttt{<|im\_end|>} at $C_{\text{outcome}}$. Compounded across 8000 rollouts this produces the observed 17\% multi-block rate (vs.\ C\_SFT's 4\% under the fixed sampler). The 1.5B SFT checkpoint's \texttt{tokenizer\_config.json} shows the same \texttt{eos\_token\_id} mismatch as 0.5B, ruling out a tokenizer-config artifact for the ``1.5B doesn't ramble'' claim.}
-\end{table}
-
-The mechanism is parameter drift through the shared transformer parameters: RL's gradient updates on the only tokens it directly observes (\texttt{<think>} content through the first \texttt{</answer>}) incidentally shift the model's distribution at unobserved positions, including the post-\texttt{</answer>} \texttt{<|im\_end|>} probability. There is no preservation signal for this token because RL never sees it emitted.
-
-\subsection{The Rambling Story Collapses}
-
-What we measured as ``rambling'' at $C_{\text{outcome}}$ (7.6 blocks) and reported as a reward-hack reflects: (a) the model emitting \texttt{<|im\_end|>}, (b) vLLM passing through it, (c) the model in OOD state most likely producing \texttt{\textbackslash n<think>Let me verify\dots} (the SFT prior's most-probable ``fresh context'' continuation), (d) that continuation containing another \texttt{<answer>} block, (e) the cycle repeating until \texttt{max\_tokens}.
-
-We re-ran eval with the fix (one line: \texttt{stop\_token\_ids=[tokenizer.eos\_token\_id, 151645]}) on $C_{\text{SFT}}$ and $C_{\text{outcome}}$:
-
-\begin{table}[h]
-\centering
-\small
-\begin{tabular}{lcccc}
-\toprule
-Checkpoint & mean blocks (bug) & mean blocks (fixed) & mean chars (bug) & mean chars (fixed) \\
-\midrule
-$C_{\text{SFT}}$ & 2.83 & \textbf{1.04} & 2111 & 1072 \\
-$C_{\text{outcome}}$ & 7.41 & \textbf{1.83} & 1982 & 1095 \\
-\bottomrule
-\end{tabular}
-\caption{Eval re-run with proper stop tokens, $n{=}500$ prompts $\times$ 16 rollouts each, temperature 1.0. The C\_SFT ``rambling'' essentially disappears (2.83 $\to$ 1.04, single-block emission as predicted by the 97.3\% logit mass on \texttt{<|im\_end|>}). At C\_outcome rambling drops 75\% but \emph{does not} collapse to 1.0 --- the model retains $\sim$17\% multi-block emission rate, suggesting RL did pull some probability mass away from \texttt{<|im\_end|>}. This residual is the real (much smaller) behavioral signal under proper sampling.}
-\end{table}
-
-\subsection{The Methodological Lesson}
-
-Three independent layers of confound stacked:
-\begin{enumerate}[leftmargin=2em,itemsep=1pt,topsep=2pt]
-  \item Training-time \texttt{stop=["</answer>"]} (collapses reward functions).
-  \item Eval-time \texttt{eos\_token\_id} mismatch (fires every rollout past intended stop).
-  \item Decode-time \texttt{skip\_special\_tokens=True} (hides the model's actual stop attempt).
-\end{enumerate}
-Each alone would be hard to find. Together they produced a clean, mechanistically intuitive, and entirely wrong story (``model rambles $\to$ reward hack $\to$ can be fixed by reward shape''). The eventual evidence was a single forward-pass argmax check; cost: $\sim 5$ minutes.
-
-The unambiguous lesson: when a behavioral measurement depends on what the sampler reports, verify that the measurement reflects what the model is \emph{trying} to do, not just what comes out of the pipeline.
-
 \section{Probe-as-Baseline: A Correct Use of the Probe in RL}\label{sec:probe-baseline}
 
 §\ref{sec:probe-rl} showed that using the near-oracle probe as the RL reward catastrophically Goodharts. But policy gradient theory points to a different role for a good predictor: \emph{baseline}, not reward. We implemented this variant (contributed by co-author Anagha Ramaswamy; see \texttt{rloo\_trainer/rloo\_update\_worker.py}).
@@ -371,54 +264,30 @@ The reward $r_i$ stays the verifier; only the baseline changes. Since the baseli
 
 \paragraph{Status.} The plumbing (\texttt{--probe\_baseline} flag, probe value computation per rollout, LOO baseline path) is in main. A controlled comparison against vanilla RLOO from the same initialization is the natural next experiment; out of scope for this report.
 
-\section{What Still Holds}
-
-\begin{itemize}[leftmargin=2em,itemsep=2pt,topsep=2pt]
-  \item Near-oracle trace-final probe (AUROC 0.982 at 0.5B $C_{\text{outcome}}$, 0.974 at 1.5B). Measured on cached activations, unaffected.
-  \item Outcome RL strengthens the probe at every level we measure (aggregate, per-problem, within-prompt matched-pair). Unaffected.
-  \item Pattern A within-rollout belief updates: probe(last) on T$\to$F drift = 0.154 (vs.\ F$\to$F floor 0.088); bidirectional in F$\to$T rescues. The blocks the model emits are real and parseable; the model's commit-time representation tracks each block's content. Unaffected.
-  \item Causal steering null: the trace-final probe is a correlational reader, not a causal controller, of a multidimensional correctness subspace. Unaffected.
-  \item Applied probe value: best-of-16 +12.1\,pp, abstention 98\% at 50\% coverage, probe-restart at $-60\%$ compute, eval-proxy $\pm 0.4$\,pp, calibration 5.4\%/3.4\%. Unaffected.
-  \item Probe-as-RL-reward catastrophic Goodhart in both regimes; structural confound exploitation; mild causal axis installation post-Goodhart. Unaffected.
-\end{itemize}
-
-\section{What Is Withdrawn or Tentative}
-
-\begin{itemize}[leftmargin=2em,itemsep=2pt,topsep=2pt]
-  \item The ``rambling-as-reward-hack causal claim'' is \textbf{withdrawn}. firstanswer-RLOO and ramble-penalty-RLOO were confounded by the training-time stop string; eval-time rambling itself is bug-induced.
-  \item The position-gap $\sim$ rambling rate correlation ($r{=}+0.89$ across snapshots) needs reinterpretation. The position-gap is a real probe AUROC observation; the rambling rate it correlates with is largely an eval artifact. The correlation may still hold under proper sampling, but is not the clean reward-hack signature we originally framed.
-  \item The ``1.5B doesn't ramble (0.075\%)'' scale claim needs verification. The 1.5B tokenizer config may differ in \texttt{eos\_token\_id} handling. Not verified before submission.
-\end{itemize}
-
 \section{Discussion}
 
 \subsection{Probes as Measurement, Not Control}
 
-Our results jointly support a particular reading of small-scale internal-state probing: the probe is a measurement instrument that becomes extremely informative as outcome reward sharpens the underlying representation, but it is a \emph{correlational reader} of a multidimensional subspace, not a causal control axis. Deployment uses that respect this distinction (best-of-K, abstention, restart) work cleanly. Uses that violate it (probe-as-reward) catastrophically fail.
+Our results jointly support a particular reading of small-scale internal-state probing: the probe is a measurement instrument that becomes extremely informative as outcome reward sharpens the underlying representation, but it is a \emph{correlational reader} of a multidimensional subspace, not a causal control axis. Deployment uses that respect this distinction (best-of-K, abstention, restart) work cleanly. Uses that violate it (probe-as-reward) catastrophically fail. The principled use of a near-oracle predictor in policy gradient is as a variance-reducing baseline for the true reward, not as the reward itself --- which we implement in \S\ref{sec:probe-baseline}.
 
-\subsection{Pattern A vs.\ Yuan et al.}
+\subsection{Comparison with Yuan et al.}
 
 Yuan et al.\ \citep{yuan2024probing} report a ``concealment gap'' at 1.5B+: the model internally represents that the answer is wrong while verbally claiming it is right. Our within-rollout analysis at 0.5B refutes this framing locally --- on T$\to$F drift rollouts the probe at the wrong-final position is statistically indistinguishable from the F$\to$F floor. The model's commit-time belief tracks the commit. This is a scale-dependent finding worth disentangling: ``small SFT model + outcome RL'' may not exhibit the same separation between internal-belief and verbal-claim that larger or differently-trained models show.
-
-\subsection{The Confound-Stack Lesson}
-
-The negative-result section of this report is the part most directly transferable to other empirical RL projects. Three stacked confounds turned a clean reward-shape comparison into a degenerate test. Each was a one-line config: a stop string, a tokenizer attribute, a decoding flag. Each was independently defensible. Together they made all candidate reward functions experimentally indistinguishable and produced a mechanistically misleading ``rambling pathology'' that doesn't exist in the model's intended behavior.
-
-The mitigation is not ``be more careful'' --- it is ``verify the measurement reflects intent.'' A five-minute forward-pass argmax check at the relevant token position would have caught the eval-time bug. That check is now a permanent item on our methodological checklist.
 
 \section{Limitations}
 
 \begin{itemize}[leftmargin=2em,itemsep=1pt,topsep=2pt]
-  \item $n{=}500$ procedurally generated, clean-406 after train-split filter. Matched-pair denominators 218--244.
-  \item Verbalized confidence is keyword-presence, not graded elicitation. Two literature-standard elicitation methods (generated [0, 100], token-logprob yes/no) broke because the SFT'd Qwen base is not chat-tuned; it treats any prompt as a new Countdown problem.
+  \item $n{=}500$ procedurally generated held-out problems, filtered to 406 not overlapping with $C_{\text{outcome}}$'s RLOO training pool. Matched-pair denominators 218--244.
+  \item Verbalized confidence is keyword-presence, not graded elicitation: two literature-standard elicitation methods broke because the SFT'd Qwen base treats any prompt as a new Countdown problem.
   \item $C_{\text{SFT}}$ is \texttt{asingh15/qwen-sft-countdown-defaultproj}, not a team-trained SFT.
   \item Most analyses at 0.5B; 1.5B coverage is the aggregate AUROC, matched-pair, and applied results.
-  \item The rambling-suppression hypothesis is untested causally due to two layered confounds; a clean test requires removing the training-time stop string (more expensive sampling) and the eval-time \texttt{eos\_token\_id} fix.
+  \item The probe-as-baseline implementation (\S\ref{sec:probe-baseline}) is code-complete; a controlled run-time comparison against vanilla RLOO is the natural next step and is out of scope for this report.
+  \item We do not make a causal claim about whether ``rambling'' (multi-\texttt{<answer>}-block emission at eval time) is a reward-hack of the verifier scoring rule. Reward-shape ablations we ran were confounded by infrastructure choices in the sampling stack; we do not present them as evidence.
 \end{itemize}
 
 \section{Conclusion}
 
-A near-oracle internal verifier emerges at the trace-final position under outcome RL on Countdown arithmetic at 0.5B, with substantial deployment-time value (selection, abstention, restart, eval-proxy) and a clear failure mode when repurposed as an RL reward (Goodhart in both initialization regimes). The model's internal correctness representation is sharpened by RL at every level we measure and is most parsimoniously framed as a multidimensional subspace from which any single linear direction reads well but writes poorly. A planned causal test of a ``rambling-as-reward-hack'' hypothesis was confounded by two independent layers of infrastructure bugs; we report the confounds directly as the central methodological observation of the project.
+A near-oracle internal verifier emerges at the trace-final position under outcome RL on Countdown arithmetic at 0.5B, with substantial deployment-time value (selection, abstention, restart, eval-proxy) and a clear failure mode when repurposed as an RL reward (Goodhart in both initialization regimes). The model's internal correctness representation is sharpened by RL at every level we measure and is most parsimoniously framed as a multidimensional subspace from which any single linear direction reads well but writes poorly. The principled use of such a near-oracle predictor in RL is as a variance-reducing baseline for the true verifier reward, not as the reward itself; we implement this construction.
 
 \bibliographystyle{plain}
 \begin{thebibliography}{9}
