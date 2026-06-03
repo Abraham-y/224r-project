@@ -39,6 +39,7 @@ class RLOOUpdateWorker:
         weight_decay=0.01, 
         warmup_ratio=0.0,
         num_training_steps=250,
+        probe_topk_M=None,
     ):
         self.model_path = model_path
         self.ref_model_path = ref_model_path if ref_model_path is not None else model_path
@@ -60,6 +61,7 @@ class RLOOUpdateWorker:
         if warmup_ratio > 0:
             raise NotImplementedError("Warmup ratio > 0 is not supported for constant learning rate schedule")
         self.num_training_steps = num_training_steps
+        self.probe_topk_M = probe_topk_M  # if set, only top-M (by probe value) per group contribute to gradient
 
     def tear_down(self):
         """Release model/optimizer objects and clear GPU memory."""
@@ -243,6 +245,7 @@ class RLOOUpdateWorker:
         entropy = (per_token_entropy * response_mask).sum() / response_token_count
 
         grouped_rewards = rewards.view(-1, self.group_size)
+        topk_mask = None
         if probe_baseline is not None:
             # Probe value-function baseline: leave-one-out MEAN of probe values
             # (a smoother, lower-variance estimate of expected reward than the
@@ -252,12 +255,25 @@ class RLOOUpdateWorker:
             # optimization target stays the true reward: variance reduction, no
             # Goodhart (contrast with reward=probe).
             grouped_pb = torch.as_tensor(probe_baseline, dtype=torch.float32, device=device).view(-1, self.group_size)
-            pb_sum = grouped_pb.sum(dim=1, keepdim=True)
-            baseline = (pb_sum - grouped_pb)/(self.group_size - 1)
+            if self.probe_topk_M is not None and 0 < self.probe_topk_M < self.group_size:
+                # Probe-best-of-K within group: gradient only flows through the
+                # top-M (by probe value) of each group. Reward stays verifier;
+                # baseline is the standard LOO-over-rewards on the full group.
+                _, top_idx = grouped_pb.topk(self.probe_topk_M, dim=1)
+                topk_mask = torch.zeros_like(grouped_pb)
+                topk_mask.scatter_(1, top_idx, 1.0)
+                group_sum = grouped_rewards.sum(dim=1, keepdim=True)
+                baseline = (group_sum - grouped_rewards)/(self.group_size - 1)
+            else:
+                pb_sum = grouped_pb.sum(dim=1, keepdim=True)
+                baseline = (pb_sum - grouped_pb)/(self.group_size - 1)
         else:
             group_sum = grouped_rewards.sum(dim=1, keepdim=True)
             baseline = (group_sum - grouped_rewards)/(self.group_size - 1)
-        advantages = (grouped_rewards - baseline).reshape(-1)
+        advantages = (grouped_rewards - baseline)
+        if topk_mask is not None:
+            advantages = advantages * topk_mask  # zero out bottom (G - M) per group
+        advantages = advantages.reshape(-1)
 
         if sample_log_probs is not None:
             behavior_log_probs = torch.as_tensor(sample_log_probs, dtype=torch.float32, device=device)
