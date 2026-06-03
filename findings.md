@@ -635,9 +635,11 @@ Probe is extremely well-calibrated. Overconfidence cases have the same rambling 
 
 ---
 
-### EXP-19: First-answer reward RLOO (verifier-level remedy) ✅ — NULL RESULT
+### EXP-19: First-answer reward RLOO (verifier-level remedy) ⚠️ — WITHDRAWN (confounded by training-time stop string)
 
-**Question.** The rambling pathology at 0.5B C_outcome (87% multi-answer rollouts, mean 7.6 `<answer>` blocks) was hypothesized to be a reward-hack of the verifier's "score-only-the-last-block" rule. If true, rewarding the FIRST block instead should kill the rambling.
+**Status note (added 2026-06-02).** This experiment and its sibling EXP-22 (ramble-penalty) were both CONFOUNDED by the vLLM sampling worker's `stop=["</answer>"]` flag in `rloo_trainer/sampling_worker.py:84-85`. Every training rollout has exactly one `<answer>` block, so the three reward functions (vanilla last-block, first-answer, first-answer−λ×extra-blocks) collapse to the SAME function on the training distribution. The null result below does NOT refute the rambling-as-reward-hack hypothesis — it cannot speak to that hypothesis at all. We retain the experiment text as a methodological note but withdraw all conclusions.
+
+**Original question.** The rambling pathology at 0.5B C_outcome (87% multi-answer rollouts, mean 7.6 `<answer>` blocks) was hypothesized to be a reward-hack of the verifier's "score-only-the-last-block" rule. If true, rewarding the FIRST block instead should kill the rambling.
 
 **Setup.** `extension/training/firstanswer_rloo.py`: monkey-patched `evaluation.countdown.compute_score` to score the first `<answer>` block. All other RLOO hyperparameters identical to vanilla C_outcome. 100 RLOO steps. Modal run `1bm6ggzs`, total runtime ~5.7h.
 
@@ -677,11 +679,11 @@ Sampled 16 rollouts × 406 clean-406 prompts from the new checkpoint (`extension
 
 The position-gap moves by only −0.012. Both the rambling behavior AND its representational signature (position-gap) are robust to the first-vs-last-block reward change.
 
-**Implication for the rambling-as-reward-hack story.** Refuted. The simple causal claim — "the verifier scores only the last block, therefore the model emits many blocks for more tries" — does not hold. Rambling is not directly caused by the last-block-scoring rule; it persists when the rule is changed to strictly disfavor multi-block emission.
+**Implication for the rambling-as-reward-hack story.** WITHDRAWN. Under the stop-string confound, this experiment cannot distinguish "the model still rambles even with first-block reward" from "the experiment was incapable of measuring a difference because both rewards were the same function at training time." The two reward functions agree pointwise on every training rollout (which all have n_blocks=1), so they produce statistically equivalent training signals. The differences in eval-time rambling between vanilla and firstanswer (7.59 vs 7.04 blocks) are within seed noise. We cannot refute or support the reward-hack hypothesis from this data.
 
-What probably IS going on: rambling is an SFT-inherited behavior pattern (C_SFT has 60% multi-answer; the `Asap7772/cog_behav_all_strategies` demonstrations encode "wait let me try another approach" structure). RLOO amplifies the rate from 60% → 84% but the gradient signal alone (first- or last-block) does not directly punish emitting more blocks; the KL penalty + cross-entropy keep the multi-block pattern stable.
+**What a clean test would require.** Remove `stop=["</answer>"]` from `rloo_trainer/sampling_worker.py` during training, allowing the policy to emit multi-block rollouts and receive differential reward under the two rules. Significantly more expensive (longer rollouts, slower sampling, more KV cache pressure). Out of scope.
 
-**Updated story for the headline.** The correlational rambling↔position-gap link (Pearson r = +0.89 across snapshots, §2.2) is preserved. The clean causal mechanism is gone — we can't say "the verifier-rule causes rambling." We can say "rambling and the position-gap co-evolve under RLOO at 0.5B; both are absent at 1.5B; the verifier-rule alone is insufficient to explain them."
+**Updated story for the headline.** The correlational rambling↔position-gap link (Pearson r = +0.89 across snapshots, §2.2) is preserved. We have no causal evidence on the verifier-rule mechanism either way — this experiment was silently neutered by the stop-string and does not bear on the hypothesis.
 
 **Output files.**
 - `eval_c_firstanswer_n500.json` (16 rollouts × 500 prompts on the new checkpoint)
@@ -797,6 +799,73 @@ At α=1.0, probe direction now causally controls accuracy by +8.3 pp over random
 
 ---
 
+### EXP-22: Ramble-penalty RLOO (λ=0.05, λ=0.20) ⚠️ — WITHDRAWN (confounded by training-time stop string)
+
+**Status note.** Same confound as EXP-19. The vLLM sampling worker halts every training rollout at the first `</answer>` (`rloo_trainer/sampling_worker.py:84-85`), so the penalty term `λ × max(0, n_blocks − 1)` is always 0 during training (n_blocks is always 1). The reward reduces to first-block-score, indistinguishable from EXP-19 (firstanswer) and indistinguishable from vanilla on the training distribution. The eval-time differences are seed noise.
+
+**Original question.** If firstanswer (EXP-19) didn't kill rambling, would an explicit per-extra-block penalty do it? Two strengths tested:
+- λ=0.05 (mild): 5% of max reward per extra block
+- λ=0.20 (strong): 20% per extra block; 5 extra blocks would zero out a correct rollout
+
+**Setup.** `extension/training/ramble_penalty_rloo.py` — monkey-patches `evaluation.countdown.compute_score`:
+```
+reward = verifier(first <answer>) − λ × max(0, n_blocks − 1)
+```
+- verifier(first): 1.0 if first block correct, 0.1 parseable-wrong, 0 no-answer
+- All other hyperparameters identical to vanilla / firstanswer
+- Init from C_SFT (asingh15/qwen-sft-countdown-defaultproj)
+- 100 RLOO steps each
+
+**Modal runs:**
+- λ=0.05: `ramble_penalty_run1` (wandb id `rbvn2lmw`), launched 2026-06-02 13:32 PDT, stopped at step 75/100 once the confound was identified (saved ~$10)
+- λ=0.20: `ramble_penalty_run2_lam020` (wandb id `z4ybdirj`), completed step 99/100 at 2026-06-02 20:05 PDT
+
+**Training trajectories** (selected steps):
+
+| ckpt | step | reward | rollout_acc | resp_len | KL |
+|---|---|---|---|---|---|
+| λ=0.05 | 0 | 0.341 | 0.270 | 473 | 0.011 |
+| λ=0.05 | 50 | 0.584 | 0.552 | 505 | 0.085 |
+| λ=0.05 | 75 (stopped) | 0.570 | 0.520 | 510 | 0.115 |
+| λ=0.20 | 0 | 0.284 | 0.207 | 481 | 0.000 |
+| λ=0.20 | 50 | 0.530 | 0.487 | 495 | (n/a) |
+| λ=0.20 | 99 (final) | 0.586 | 0.541 | 438 | (n/a) |
+
+These metrics look identical to firstanswer (EXP-19) — rollout_accuracy converges to ~0.5, response length compresses ~25% (training-time only, due to stop-string).
+
+**Downstream eval on λ=0.20 final checkpoint** (16 rollouts × 500 prompts, script: `extension/evaluation/sample_local_jsonl.py`, output `eval_ramble_penalty_lam020_n500.json`):
+
+| Metric | C_SFT | vanilla C_outcome | firstanswer | **ramble-penalty λ=0.20** |
+|---|---|---|---|---|
+| Mean blocks/rollout | 2.90 | 7.59 | 7.04 | **11.23** |
+| Median blocks | (~2) | (~7) | (~6) | **9** |
+| 1-block rollouts | 29% | 13% | 11% | **4.2%** |
+| 4+ block rollouts | (~25%) | (~75%) | (~70%) | **80%** |
+| First-block accuracy | 0.313 | 0.602 | 0.570 | **0.561** |
+| Last-block accuracy | 0.253 | 0.543 | 0.510 | **0.342** |
+| Mean response chars | 2111 | 1982 | 1997 | **2068** |
+
+**The model rambles MORE than vanilla at eval time** (11.23 blocks vs 7.59). First-block accuracy is comparable to firstanswer (0.561 vs 0.570). Last-block accuracy is DROPPED vs everything else (0.342) because more blocks → more chances for the last one to be wrong.
+
+**Diagnosis: the stop-string confound.** `rloo_trainer/sampling_worker.py:84-85` sets `stop=["</answer>"]` for vLLM at training time, so every training rollout has exactly one `<answer>` block, the penalty term is always 0, and the three reward functions collapse to "score the first/only block." We trained EXP-19 and EXP-22 (×2) under mathematically equivalent reward signals, just with different seeds. The eval-time differences (7.04 vs 7.59 vs 11.23 blocks) reflect:
+- KL drift trajectories during training
+- Random seed in vLLM
+- Which arm of the multi-dim post-`</answer>` distribution the model slid into
+
+**What we can NOT conclude.** That penalizing extra blocks fails to suppress rambling. We never tested it; we only tested first-block-correctness reward three times with different seeds.
+
+**What we CAN conclude (negative methodological lesson).** When training a reward function that depends on `n_blocks` (or any feature of the rollout that the sampler can clip), verify the sampler doesn't make that feature constant on the training distribution. A 5-line check at the top of training would have caught this before any compute spend.
+
+**Compute lost to this confound.** Across EXP-19 + EXP-22 (×2) + downstream evals: ~$80-100 in Modal H100 time, plus the original chain `b8bcch5ki` misfire that triggered λ=0.05's eval at step 70 (~$10 wasted on a partial-checkpoint eval that we then had to re-run for λ=0.20). Total: ~$90-110.
+
+**Outputs (kept for the record, marked CONFOUNDED in any downstream use).**
+- Scripts: `extension/training/ramble_penalty_rloo.py`
+- Checkpoints: `/vol/checkpoints/rloo_ramble_penalty_checkpoints/...ramble_penalty_run{1,2}_lam020/`
+- Eval: `eval_ramble_penalty_lam020_n500.json`
+- Wandb: `rloo_ramble_penalty_0.5b/ramble_penalty_run{1,run2_lam020}`
+
+---
+
 ### EXP-20: Reward-hack cost — first-vs-last answer accuracy + token waste ✅
 
 **Question.** Is the rambling reward-hack *functional* (the model rescues itself wrong→right) or *net-negative* (it drifts right→wrong)? How many tokens does the rambling tail waste, and does the cost grow over RLOO training? This is the no-retraining behavioral counterfactual that predicts EXP-19's outcome.
@@ -856,10 +925,17 @@ At α=1.0, probe direction now causally controls accuracy by +8.3 pp over random
 - "Within-prompt matched-pair effect collapses between checkpoints" (Mann-Whitney was p=8e-16 under wrong labels; now p=0.68 NS under corrected).
 - "Within-problem decoupling at trace-final" framing (no longer supported).
 
+### What did NOT survive the stop-string confound discovery (withdrawn 2026-06-02):
+
+- **EXP-19 first-answer-RLOO null result** ("rambling-as-reward-hack hypothesis is refuted"). WITHDRAWN. The training-time `stop=["</answer>"]` in `rloo_trainer/sampling_worker.py:84-85` makes every training rollout a single-block sequence; the verifier-rule (last vs first block) is then a mathematical no-op. The two rewards produce identical training signals; the null is uninformative about the causal mechanism.
+- **EXP-22 ramble-penalty RLOO results** (λ=0.05 and λ=0.20). WITHDRAWN for the same reason — the penalty term `λ × max(0, n_blocks − 1)` is always 0 on single-block training rollouts.
+- The "rambling is not directly caused by the last-block-scoring rule" causal claim in §18.10 of the writeup. WITHDRAWN.
+- Headline claim 9 (the rambling-reward-hack causal claim) — softened to "correlational only; UNTESTED causally."
+
 ### Pending:
 
-- firstanswer_rloo downstream eval (causal test of rambling-as-reward-hack).
 - 1.5B Option B dynamics (cleaner mechanistic confirmation of scale claim).
+- A clean causal test of rambling-as-reward-hack would require removing `stop=["</answer>"]` from `rloo_trainer/sampling_worker.py` during training; out of scope (substantially more expensive sampling). See EXP-19 / EXP-22 (both WITHDRAWN as confounded).
 
 ---
 
