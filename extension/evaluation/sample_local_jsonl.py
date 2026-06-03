@@ -74,6 +74,13 @@ def parse_args():
     parser.add_argument("--max_num_batched_tokens", type=int, default=4096)
     parser.add_argument("--enable_chunked_prefill", type=bool, default=True)
     parser.add_argument("--max_num_seqs", type=int, default=16)
+    parser.add_argument(
+        "--extra_stop_token_ids",
+        type=str,
+        default="",
+        help="Comma-separated extra token IDs to treat as stops. "
+             "E.g. '151645' to also stop on <|im_end|>. Empty = default (eos_token_id only).",
+    )
     return parser.parse_args()
 
 
@@ -97,6 +104,11 @@ def main():
         args.max_num_seqs,
     )
 
+    extra_stops = [int(x) for x in args.extra_stop_token_ids.split(",") if x.strip()]
+    stop_ids = [tokenizer.eos_token_id] + extra_stops
+    print(f"[eval] sampling will stop on token ids: {stop_ids} "
+          f"(decoded: {[tokenizer.decode([i]) for i in stop_ids]!r})")
+
     sampling_params = SamplingParams(
         temperature=args.temperature,
         top_p=args.top_p,
@@ -104,6 +116,7 @@ def main():
         min_p=args.min_p,
         max_tokens=args.max_tokens,
         n=args.num_responses,
+        stop_token_ids=stop_ids,
     )
 
     prompts = [r["prompt"] for r in rows]
