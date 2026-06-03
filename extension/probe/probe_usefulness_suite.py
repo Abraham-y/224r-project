@@ -185,6 +185,113 @@ def _save_fig(fig, path: str) -> None:
     print(f"  saved {path}", flush=True)
 
 
+def _init_wandb(args):
+    """Best-effort W&B init. Returns the run or None (never raises)."""
+    if not args.wandb:
+        return None
+    try:
+        import wandb
+    except ImportError:
+        print("[suite] wandb not installed; skipping W&B logging.", flush=True)
+        return None
+    try:
+        run = wandb.init(
+            project=args.wandb_project,
+            name=args.wandb_name,
+            config={
+                "model": args.model,
+                "layer": args.layer,
+                "max_responses": args.max_responses,
+                "clean_only": args.clean_only,
+                "skip_transfer": args.skip_transfer,
+                "outcome_json": args.outcome_json,
+                "sft_json": args.sft_json,
+            },
+        )
+        print(f"[suite] W&B logging to {run.url}", flush=True)
+        return run
+    except Exception as e:  # noqa: BLE001
+        print(f"[suite] wandb.init failed ({e}); continuing without W&B.", flush=True)
+        return None
+
+
+def _flatten_scalars(obj, prefix: str, out: dict) -> None:
+    """Recursively collect finite scalar leaves into out[dot/path] = value."""
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            key = f"{prefix}/{k}" if prefix else str(k)
+            _flatten_scalars(v, key, out)
+    elif isinstance(obj, bool):
+        return
+    elif isinstance(obj, (int, float)):
+        if isinstance(obj, float) and obj != obj:  # nan
+            return
+        out[prefix] = obj
+
+
+def _log_wandb(run, summary: dict, out_dir: str) -> None:
+    """Log every scalar metric (incl. verifier ground-truth), the scaling /
+    transfer curves as line plots, and the saved figures."""
+    if run is None:
+        return
+    import wandb
+
+    # 1) All scalar metrics, flattened (covers exp1-6 + probe_auroc).
+    flat: dict = {}
+    _flatten_scalars(summary, "", flat)
+
+    # 2) Explicit verifier-derived ground-truth namespace for clarity.
+    e2 = summary.get("exp2") or {}
+    e1 = summary.get("exp1") or {}
+    if "true_acc" in e2:
+        flat["verifier/true_acc"] = e2["true_acc"]
+    if "base_acc" in e1:
+        flat["verifier/base_pass@1"] = e1["base_acc"]
+    for K, v in (summary.get("exp3") or {}).items():
+        if isinstance(v, dict) and v.get("oracle") is not None:
+            flat[f"verifier/oracle_pass@{K}"] = v["oracle"]
+
+    run.summary.update(flat)
+    run.log(flat)
+
+    # 3) Scaling curve as a line plot (probe vs random vs oracle).
+    e3 = summary.get("exp3") or {}
+    if e3:
+        ks = sorted(int(k) for k in e3.keys())
+        try:
+            run.log({"exp3/scaling_curve": wandb.plot.line_series(
+                xs=ks,
+                ys=[[e3[str(k)]["probe"] for k in ks],
+                    [e3[str(k)]["random"] for k in ks],
+                    [e3[str(k)]["oracle"] for k in ks]],
+                keys=["probe-best-of-K", "random-pick", "oracle pass@K"],
+                title="Exp #3: Probe-scaling curve", xname="K")})
+        except Exception as e:  # noqa: BLE001
+            print(f"[suite] scaling line_series skipped: {e}", flush=True)
+
+    # 4) Transfer curve (exp5) as a line plot, if it ran.
+    e5 = summary.get("exp5") or {}
+    bok = (e5 or {}).get("transfer_bestofK") if e5 else None
+    if bok:
+        ks = sorted(int(k) for k in bok.keys())
+        try:
+            run.log({"exp5/transfer_curve": wandb.plot.line_series(
+                xs=ks, ys=[[bok[str(k)] for k in ks]],
+                keys=["transfer-probe-best-of-K"],
+                title="Exp #5: Train-once transfer best-of-K", xname="K")})
+        except Exception as e:  # noqa: BLE001
+            print(f"[suite] transfer line_series skipped: {e}", flush=True)
+
+    # 5) Figures.
+    for fname in ("fig1_abstention.png", "fig3_scaling.png", "fig4_vs_majority.png"):
+        fpath = os.path.join(out_dir, fname)
+        if os.path.exists(fpath):
+            run.log({f"figures/{fname[:-4]}": wandb.Image(fpath)})
+
+    run.finish()
+    print("[suite] W&B logging complete.", flush=True)
+
+
 def _nan_to_none(obj):
     """Recursively make dicts/lists JSON-safe (nan→null, numpy→python)."""
     if isinstance(obj, float):
@@ -557,6 +664,10 @@ def main() -> None:
     ap.add_argument("--skip_transfer", action="store_true",
                     help="Skip Exp #5 (train-once transfer) to save ~15 min on Modal.")
     ap.add_argument("--out_dir",       default="/vol/outputs/probe_usefulness_suite")
+    ap.add_argument("--wandb", action=argparse.BooleanOptionalAction, default=True,
+                    help="Log all metrics + figures to Weights & Biases (default on).")
+    ap.add_argument("--wandb_project", default="probe_usefulness_suite")
+    ap.add_argument("--wandb_name",    default=None)
     args = ap.parse_args()
 
     try:
@@ -565,6 +676,8 @@ def main() -> None:
         pass
 
     os.makedirs(args.out_dir, exist_ok=True)
+
+    wandb_run = _init_wandb(args)
 
     def _load_clean(path: str) -> list:
         rows = [json.loads(line) for line in open(path) if line.strip()]
@@ -624,6 +737,9 @@ def main() -> None:
     with open(out_json, "w") as f:
         json.dump(_nan_to_none(summary), f, indent=2, default=str)
     print(f"\n[suite] wrote {out_json}", flush=True)
+
+    # ---- W&B logging (all metrics incl. verifier + curves + figures) ----
+    _log_wandb(wandb_run, _nan_to_none(summary), args.out_dir)
 
     # ---- Headline summary ----
     print("\n" + "=" * 60, flush=True)
