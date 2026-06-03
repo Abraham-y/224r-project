@@ -206,6 +206,39 @@ def run_firstanswer_rloo(trainer_args: list[str]) -> str:
     volumes={str(REMOTE_VOLUME_ROOT): TRAINING_VOLUME},
     secrets=_build_secret_list(),
 )
+def run_probe_reward_rloo(trainer_args: list[str]) -> str:
+    # Reward-design ablation arm C: RLOO where the reward is the frozen probe's
+    # P(correct) read at </think> (L16) of a frozen C_SFT model, instead of the
+    # verifier. Tests whether the near-oracle internal probe survives as a
+    # *controller* (vs reader) or gets Goodhart-hacked.
+    return _run_training("extension/training/probe_reward_rloo.py", trainer_args)
+
+
+@app.function(
+    image=base_image,
+    gpu=GPU_CONFIG,
+    cpu=CPU_COUNT,
+    timeout=TIMEOUT_SECONDS,
+    startup_timeout=STARTUP_TIMEOUT_SECONDS,
+    volumes={str(REMOTE_VOLUME_ROOT): TRAINING_VOLUME},
+    secrets=_build_secret_list(),
+)
+def run_prompt_difficulty(trainer_args: list[str]) -> str:
+    # Prompt-only difficulty probe: forward-pass prompts, predict per-problem
+    # pass rate from the LAST PROMPT TOKEN hidden state (input-time difficulty,
+    # pre-generation) vs a surface-feature control.
+    return _run_training("extension/probe/prompt_difficulty_probe.py", trainer_args)
+
+
+@app.function(
+    image=base_image,
+    gpu=GPU_CONFIG,
+    cpu=CPU_COUNT,
+    timeout=TIMEOUT_SECONDS,
+    startup_timeout=STARTUP_TIMEOUT_SECONDS,
+    volumes={str(REMOTE_VOLUME_ROOT): TRAINING_VOLUME},
+    secrets=_build_secret_list(),
+)
 def run_eval(eval_args: list[str]) -> str:
     return _run_eval(eval_args)
 
@@ -357,7 +390,8 @@ def _build_parser() -> argparse.ArgumentParser:
             "probe_cache", "elicit_confidence", "token_logprob_confidence",
             "sample_local", "cache_answers", "causal_steering",
             "probe_behavioral", "train_answer_probe",
-            "cache_all_thinkclose", "firstanswer_rloo",
+            "cache_all_thinkclose", "firstanswer_rloo", "probe_reward_rloo",
+            "prompt_difficulty",
         ),
     )
     parser.add_argument(
@@ -406,6 +440,10 @@ def main(*raw_args: str) -> None:
         call = run_cache_all_thinkclose.spawn(trainer_args)
     elif args.trainer == "firstanswer_rloo":
         call = run_firstanswer_rloo.spawn(trainer_args)
+    elif args.trainer == "probe_reward_rloo":
+        call = run_probe_reward_rloo.spawn(trainer_args)
+    elif args.trainer == "prompt_difficulty":
+        call = run_prompt_difficulty.spawn(trainer_args)
     else:
         call = run_rloo.spawn(trainer_args)
 
