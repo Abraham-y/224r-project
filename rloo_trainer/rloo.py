@@ -227,13 +227,23 @@ class RLOOTrainer:
         input_ids = np.concatenate([prompt_input_ids, response_input_ids], axis=1)
         attention_mask = np.concatenate([prompt_attention_mask, response_attention_mask], axis=1)
         
-        return {
+        out = {
             "input_ids": input_ids,
             "attention_mask": attention_mask,
             "is_response_token": is_response_token,
             "rewards": np.array(all_rewards_flattened, dtype=np.float32),
             "sample_log_probs": np.array(all_sample_log_probs_flattened, dtype=np.float32),
         }
+        # Probe value-baseline (gated): a per-rollout probe value V(</think>) used
+        # as the RLOO advantage baseline (leave-one-out mean computed worker-side).
+        # Computed prompt-major to match the rewards flattening above.
+        if getattr(self, "probe_baseline", False):
+            pv = self.probe_valuer.values(all_prompts, all_responses)  # batch x group
+            pv_flattened = [item for sublist in pv for item in sublist]
+            assert len(pv_flattened) == len(all_rewards_flattened), (
+                f"probe values {len(pv_flattened)} != rewards {len(all_rewards_flattened)}")
+            out["probe_values"] = np.array(pv_flattened, dtype=np.float32)
+        return out
 
     def train(self):
         """Run online RLOO training for `num_training_steps` updates."""
@@ -312,6 +322,7 @@ class RLOOTrainer:
                     is_response_token=tokenized_batch["is_response_token"],
                     rewards=tokenized_batch["rewards"],
                     sample_log_probs=tokenized_batch["sample_log_probs"],
+                    probe_baseline=tokenized_batch.get("probe_values"),
                 ))
 
                 print(f"Saving checkpoint, Epoch {epoch}, Global Step {global_step}")
@@ -405,6 +416,18 @@ if __name__ == "__main__":
     parser.add_argument('--num_training_steps', type=int, default=250)
     parser.add_argument('--gradient_accumulation_steps', type=int, default=1)
     parser.add_argument('--gradient_clipping', type=float, default=1.0)
+    # --- Probe value-baseline (gated; default off => standard reward-LOO baseline) ---
+    parser.add_argument('--probe_baseline', action='store_true',
+                        help="Use a probe value (leave-one-out mean) as the RLOO advantage "
+                             "baseline instead of the reward LOO. Reward stays the verifier.")
+    parser.add_argument('--probe_value_model', type=str, default=None,
+                        help="Frozen model for the probe value (default: --model_name).")
+    parser.add_argument('--probe_value_pkl', type=str, default=None,
+                        help="Precomputed probe (.pkl/.npz); if omitted, trained at startup.")
+    parser.add_argument('--probe_value_layer', type=int, default=16)
+    parser.add_argument('--probe_value_rollouts', type=str, default='eval_c_sft_n500.json',
+                        help="C_SFT rollouts to train the probe value on (if no --probe_value_pkl).")
+    parser.add_argument('--probe_value_train_max', type=int, default=3000)
     parser.add_argument('--temperature', type=float, default=1.0)
     parser.add_argument('--top_p', type=float, default=1.0)
     parser.add_argument('--top_k', type=int, default=-1)
@@ -431,8 +454,53 @@ if __name__ == "__main__":
     del args.disable_chunked_prefill
 
     ray.init()
-    
+
+    # Pop probe-baseline args so they don't reach RLOOTrainer(**vars(args)).
+    _pb = args.probe_baseline
+    _pb_model = args.probe_value_model or args.model_name
+    _pb_pkl = args.probe_value_pkl
+    _pb_layer = args.probe_value_layer
+    _pb_rollouts = args.probe_value_rollouts
+    _pb_train_max = args.probe_value_train_max
+    for _k in ("probe_baseline", "probe_value_model", "probe_value_pkl",
+               "probe_value_layer", "probe_value_rollouts", "probe_value_train_max"):
+        delattr(args, _k)
+
     trainer = RLOOTrainer(
         **vars(args)
     )
+
+    if _pb:
+        # Build a frozen probe valuer (reuses the probe machinery from the
+        # reward-arm wrapper) and attach it; tokenize_batch reads self.probe_valuer.
+        import os as _os, sys as _sys
+        _repo = _os.path.abspath(_os.path.join(_os.path.dirname(__file__), ".."))
+        if _repo not in _sys.path:
+            _sys.path.insert(0, _repo)
+        from extension.training.probe_reward_rloo import (
+            _load_frozen_model, _think_close_hidden, _train_probe, _load_probe)
+        import evaluation.countdown as _cd
+        _tok, _model = _load_frozen_model(_pb_model)
+        _probe = (_load_probe(_pb_pkl) if _pb_pkl
+                  else _train_probe(_tok, _model, _pb_rollouts, _pb_layer, _pb_train_max, _cd))
+
+        class _ProbeValuer:
+            def values(self, prompts, responses):
+                out = []
+                for p, resps in zip(prompts, responses):
+                    row = []
+                    for r in resps:
+                        h = _think_close_hidden(_tok, _model, p, r, _pb_layer)
+                        row.append(float(_probe.predict_proba(h[None, :])[0, 1])
+                                   if h is not None else 0.5)
+                    out.append(row)
+                return out
+
+        trainer.probe_valuer = _ProbeValuer()
+        trainer.probe_baseline = True
+        print("[probe_baseline] ACTIVE: advantage = R_verifier - LOO-mean(probe V@</think>). "
+              "Reward unchanged (verifier); reward_mean == true accuracy.", flush=True)
+    else:
+        trainer.probe_baseline = False
+
     trainer.train()

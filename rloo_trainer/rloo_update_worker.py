@@ -141,6 +141,7 @@ class RLOOUpdateWorker:
         is_response_token: np.ndarray,
         rewards: np.ndarray,
         sample_log_probs: Optional[np.ndarray] = None,
+        probe_baseline: Optional[np.ndarray] = None,
         device='cuda',
     ):
         """Split incoming batch into microbatches and call `update(...)`."""
@@ -166,7 +167,10 @@ class RLOOUpdateWorker:
                 curr_sample_log_probs = None
                 if sample_log_probs is not None:
                     curr_sample_log_probs = sample_log_probs[i * group_per_gradient_accumulation_step:(i + 1) * group_per_gradient_accumulation_step]
-                
+                curr_probe_baseline = None
+                if probe_baseline is not None:
+                    curr_probe_baseline = probe_baseline[i * group_per_gradient_accumulation_step:(i + 1) * group_per_gradient_accumulation_step]
+
                 is_update_step = (i == self.gradient_accumulation_steps - 1)
                 curr_update_metrics = self.update(
                     curr_input_ids,
@@ -176,6 +180,7 @@ class RLOOUpdateWorker:
                     curr_sample_log_probs,
                     is_update_step,
                     device,
+                    probe_baseline=curr_probe_baseline,
                 )
                 all_metrics.append(curr_update_metrics)
             update_metrics = {}
@@ -196,6 +201,7 @@ class RLOOUpdateWorker:
                 sample_log_probs,
                 True,
                 device,
+                probe_baseline=probe_baseline,
             )
 
         return update_metrics
@@ -211,6 +217,7 @@ class RLOOUpdateWorker:
         sample_log_probs: Optional[np.ndarray] = None,
         is_update_step: bool = True,
         device='cuda',
+        probe_baseline: Optional[np.ndarray] = None,
     ):
         max_importance_weight=10.0
 
@@ -236,8 +243,20 @@ class RLOOUpdateWorker:
         entropy = (per_token_entropy * response_mask).sum() / response_token_count
 
         grouped_rewards = rewards.view(-1, self.group_size)
-        group_sum = grouped_rewards.sum(dim=1, keepdim=True)
-        baseline = (group_sum - grouped_rewards)/(self.group_size - 1)
+        if probe_baseline is not None:
+            # Probe value-function baseline: leave-one-out MEAN of probe values
+            # (a smoother, lower-variance estimate of expected reward than the
+            # discrete 0/0.1/1 verifier reward). Unbiased -- baseline_i uses only
+            # the OTHER rollouts' probe values, so it does not depend on rollout
+            # i's sampled action. The REWARD is unchanged (verifier), so the
+            # optimization target stays the true reward: variance reduction, no
+            # Goodhart (contrast with reward=probe).
+            grouped_pb = torch.as_tensor(probe_baseline, dtype=torch.float32, device=device).view(-1, self.group_size)
+            pb_sum = grouped_pb.sum(dim=1, keepdim=True)
+            baseline = (pb_sum - grouped_pb)/(self.group_size - 1)
+        else:
+            group_sum = grouped_rewards.sum(dim=1, keepdim=True)
+            baseline = (group_sum - grouped_rewards)/(self.group_size - 1)
         advantages = (grouped_rewards - baseline).reshape(-1)
 
         if sample_log_probs is not None:
