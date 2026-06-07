@@ -26,10 +26,7 @@ wandb/
 logs/
 *.log
 
-# Eval JSONs: keep in repo (small, reproducibility anchors)
-# (Earlier these were ignored; now version-controlled per user request.)
-
-# Analysis artifacts (still ignored; large or trivially reproducible)
+# Analysis artifacts (large or trivially reproducible)
 extension/cache/
 extension/outputs/
 *.npz
@@ -40,5 +37,38 @@ extension/outputs/
 .DS_Store
 
 # Personal/local Claude Code settings
-.claude/settings.local.json
-sft_aug_sanity.json
+.claude/
+
+# === Paper artifacts (kept private; never push) ===
+*.tex
+*.pdf
+*.aux
+*.bbl
+*.blg
+*.out
+*.toc
+*.fdb_latexmk
+*.fls
+*.synctex.gz
+*.bib
+*.cls
+*.sty
+figures/
+
+# Private research notes / writeups / runbooks (not for the public repo)
+writeup.md
+findings.md
+RUNBOOK_CLEAN_REPLICATION.md
+MEMORY.md
+script.tex
+memory/
+
+# Large eval outputs (rebuild with extension/evaluation scripts)
+eval_*.json
+eval.json
+causal_steering_*.jsonl
+*.jsonl
+
+# Modal submission bundles
+rloo_trainer/submit/
+rloo_trainer/submit.zip

@@ -1,454 +1,157 @@
-# Default Project
+# Reading vs. Writing a Near-Oracle Internal Verifier
 
-This folder is the main class-project workspace for training and evaluating language models on the Countdown arithmetic reasoning task.
+**Stanford CS 224R class project — Abraham Yeung & Anagha Ramaswamy.**
 
-The goal of this README is to be readable even if you are new to reinforcement learning (RL).
+This repository contains the code and experimental artifacts for our investigation of when a near-oracle linear correctness probe on a small language model's hidden states is safe to wire into RL training, and when it catastrophically fails. The headline finding is a **reader/writer asymmetry**: the same probe direction is excellent as a deployment selector, causally inert under intervention on the vanilla checkpoint, and a catastrophic Goodhart trap when used as the RL reward — and the difference between those outcomes is entirely determined by how much policy-gradient access the probe receives.
 
-## 1. What You Are Building
+The repository is organised around the **`extension/`** directory, which contains the research code that produced the experimental results. The class-provided trainer scaffolds (`sft_trainer/`, `ipo_trainer/`, `rloo_trainer/`, `evaluation/`) are kept for reproducibility, with our additions (notably the LOO probe-baseline integration in `rloo_trainer/rloo_update_worker.py`).
 
-You are implementing a standard post-training pipeline used in modern LLM work:
+---
 
-1. `SFT` (Supervised Fine-Tuning): learn from correct examples.
-2. `IPO` (A General Theoretical Paradigm to Understand Learning from Human Preferences): learn from preference pairs.
-3. `RLOO` (Reinforce Leave-One-Out): RL-style optimization directly from rewards.
-4. `Evaluation`: measure how often the model solves Countdown problems.
+## Headline results
 
-Important: this is starter code for a class project. Some training logic is intentionally left as TODOs.
+Working on Qwen2.5-0.5B (replicated at 1.5B) trained on Countdown arithmetic with RLOO:
 
-## 2. Current Project Status (What Is and Is Not Implemented)
+| Claim | Evidence |
+|---|---|
+| A trace-final correctness probe is **near-oracle**, and outcome RL strengthens it. | Held-out AUROC `0.912 → 0.982` (0.5B); `0.974` at 1.5B; within-prompt matched-pair Wilcoxon `p < 1e-7`. |
+| Within multi-answer rollouts, the model's commit-time representation tracks the commit — **no "knows-but-doesn't-say"** at this scale. | On T→F drift rollouts, probe at the wrong-final commit = `0.154`, matches F→F floor `0.088`. |
+| The probe is a **reader, not a controller** on the vanilla checkpoint. | Activation-addition steering vs. matched random direction gives Δ ∈ `[-0.07, +0.02]` across α. |
+| As a **deployment selector** the probe is highly useful at zero extra inference compute. | Best-of-16 `+12.1 pp`; budgeted restart matches best-of-16 at `−60%` compute; abstention `98%` at `50%` coverage; probe-mean estimates dataset accuracy within `±0.4 pp`. |
+| As the **RL reward**, the probe catastrophically Goodharts in both initialisation regimes. | `runA` (init from C_outcome): delayed Goodhart, `−25 pp` first-block accuracy; `runB` (init from C_SFT): immediate Goodhart, `−22 pp`. |
+| **Mech-interp signature of Goodhart.** The same probe direction — causally inert before RL — becomes measurably causal after, while a near-orthogonal correctness-correlated direction stays null on the same checkpoint. | Probe direction Δ = `+0.083` at α=1.0; assertion direction (cosine `0.038`, AUROC `0.70`) Δ = `−0.015`. |
+| **Safe constructions** that bound or eliminate probe gradient access give either small lifts or no Goodhart. | Probe-as-baseline (LOO control variate): target-invariant. Multiplicative shaping `r = verifier × probe`: `+2.8 pp` first-block at `n=8,000`. Probe-best-of-K in-training selection: `+1.5 pp`, halves mean blocks per rollout. |
 
-Implemented:
-- Data loading and batching for SFT, IPO, and RLOO.
-- RLOO high-level orchestration (sampling, reward computation, checkpoint handoff).
-- Countdown reward/scoring and vLLM-based evaluation pipeline.
+Full writeup: see the CS 224R report (private; not in the repo).
 
-Not implemented (you need to write these for the project):
-- `sft_trainer/sft.py`: `train(...)` raises `NotImplementedError`.
-- `ipo_trainer/ipo.py`: `train(...)` raises `NotImplementedError`.
-- `rloo_trainer/rloo_update_worker.py`: `update(...)` raises `NotImplementedError`.
+---
 
-**Milestones for submission**
+## Repository layout
 
-1. Implement and validate SFT training loop.
-2. Implement IPO loop and compare against SFT baseline.
-3. Implement RLOO update step and tune stability (batch/group/entropy/KL).
-4. Run pass@k analysis in `evaluation/view_passk.ipynb`.
-5. Implement novel extension entailing exploration of an answered/partially answered problem (See Section 2 of the Project Report)
+```
+extension/                       # All research-extension code lives here
+├── probe/
+│   ├── cache_hidden_states.py            # Cache pre_answer, assertion, neutral activations
+│   ├── cache_answer_positions.py         # Cache <answer>-opening hidden states
+│   ├── causal_steering.py                # Activation-addition steering protocol
+│   ├── save_probe_direction_temp1.py     # Persist the L16 pre_answer probe direction
+│   ├── cross_position_transfer.py        # Within-checkpoint cross-position cosines
+│   ├── phase2a_position_appropriate_probe.py    # Within-rollout T→F drift analysis
+│   ├── probe_abstention_and_hybrid.py    # Selective abstention + probe-best hybrid
+│   ├── probe_adaptive_budget.py          # Adaptive K_avg budget
+│   ├── probe_answer_commit.py            # Probe-commit (within-rollout block selector)
+│   ├── probe_applied_scale_comparison.py # 0.5B vs 1.5B applied strategies
+│   ├── probe_as_eval_proxy.py            # Probe-mean as dataset-accuracy proxy
+│   ├── probe_bestofk_offline.py          # Best-of-K probe selector
+│   ├── probe_guided_restart.py           # Budgeted probe-guided restart
+│   ├── probe_rl_downstream_analysis.py   # Post-RL probe diagnostics
+│   └── ...
+├── training/
+│   ├── probe_rloo.py                     # Probe-as-RL-reward base (runA, runB)
+│   ├── probe_reward_rloo.py              # +multiplicative shaping mode
+│   └── probe_augmented_rloo.py           # Probe-best-of-K in-training selector
+├── evaluation/
+│   └── sample_local_jsonl.py             # vLLM sampling pipeline with stop-token config
+└── metrics/
+    ├── diagnose_outcome.py               # First-/last-block, length, n-blocks diagnostics
+    ├── calibration.py                    # Probe calibration vs verifier
+    ├── behavioral.py                     # Behavioural metrics on rollouts
+    └── dynamics.py                       # Training-time dynamics
 
-## 3. Countdown Task Overview
+rloo_trainer/
+├── rloo_update_worker.py                 # Standard RLOO update + LOO probe-baseline path
+└── ...                                   # Class-provided scaffolds
 
-Each example provides:
-- Target number (for example, `24`)
-- Allowed numbers (for example, `[3, 4, 6, 8]`)
+sft_trainer/, ipo_trainer/                # Class-provided scaffolds (used for the SFT step only)
 
-The model should output an equation inside tags:
-
-```text
-<answer>(8 - 4) * 6</answer>
+scripts/
+├── make_poster_figures.py                # Matplotlib PDFs for the four headline figures
+├── compute_verifier_acc.py               # Pooled verifier accuracy computation
+└── eval_multiplicative_all_checkpoints.{sh,ps1}
 ```
 
-Scoring in `evaluation/countdown.py`:
-- `0.0`: no `<answer>...</answer>` found.
-- `0.1` (format score): answer extracted but invalid equation or wrong result.
-- `1.0`: valid equation using exactly the provided numbers and equals target.
+The `extension/cache/` directory holds cached hidden-state activations (`.npz`, `.pkl`) and trained probe direction vectors. These are gitignored; rebuild with the `cache_*.py` scripts.
 
-## 4. Folder Map
+---
 
-```text
-student_code/
-├── README.md
-├── modal_train.py             # Shared Modal app/entrypoint for remote training
-├── sft_trainer/
-│   ├── sft.py                  # SFT training entrypoint (train loop TODO)
-│   ├── sft_dataset.py          # SFT dataset + collate logic
-│   ├── train_sft.sh            # Example SFT launcher
-│   ├── train_sft_modal.sh      # Modal SFT launcher
-│   ├── upload_sft.py           # Push trained checkpoint to Hugging Face Hub
-│   └── upload_model_hf_sft.sh  # Batch upload helper script
-├── ipo_trainer/
-│   ├── ipo.py                  # IPO training entrypoint (train loop TODO)
-│   ├── ipo_dataset.py          # IPO pairwise dataset + collate logic
-│   ├── train_ipo.sh            # Example IPO launcher
-│   └── train_ipo_modal.sh      # Modal IPO launcher
-├── rloo_trainer/
-│   ├── rloo.py                 # RLOO training orchestration loop
-│   ├── rloo_update_worker.py   # Gradient update worker (update TODO)
-│   ├── sampling_worker.py      # vLLM sampling worker
-│   ├── rloo_dataset.py         # RLOO dataset loader
-│   ├── train_rloo.sh           # Example RLOO launcher
-│   └── train_rloo_modal.sh     # Modal RLOO launcher
-└── evaluation/
-    ├── countdown.py            # Answer extraction + validation + reward
-    ├── countdown_eval.py       # Batch evaluation with vLLM
-    ├── sample.sh               # Multi-model eval launcher
-    ├── sample_modal.sh         # Multi-model Modal eval launcher
-    └── view_passk.ipynb        # Notebook for pass@k analysis
-```
+## Reproducing the headline experiments
 
-## 6. Setup (First Time)
+All training and large evals were run on Modal H100 (single GPU per job). Total project compute spend: **~$265**.
 
-Use the repository root for installation, then switch into `student_code` for all training/eval commands. You can run training either locally on your own GPU or remotely on Modal.
+### 1. SFT and the baseline RL checkpoint
 
-### 6.1 Python Environment
+We did not retrain SFT. `C_SFT` is `asingh15/qwen-sft-countdown-defaultproj`. `C_outcome` is 100 RLOO steps from `C_SFT` with the standard verifier reward (`batch_size=128`, `kl=1e-3`, `lr=1e-5`).
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install --upgrade pip
-pip install -e ".[all]"
+bash rloo_trainer/train_rloo_modal.sh   # 100 steps from C_SFT, verifier reward
 ```
 
-Notes:
-- You need a CUDA-capable GPU for practical training/sampling.
-- The code loads many models in `bfloat16`; ensure your GPU/runtime supports it.
-- `modal` is included in `pip install -e ".[all]"`, so the same environment can be used for either local or Modal launches.
-
-### 6.2 Authentication / Environment Variables
-
-We will be using Weights and Biases for experiment tracking. For more details, you can check out their documentation [here](https://docs.wandb.ai/models/quickstart).
-
-Set these before launching scripts:
+### 2. Cache hidden states and train probes
 
 ```bash
-export WANDB_API_KEY=...
-export HF_TOKEN=...
-export HF_DATASETS_CACHE=${HF_DATASETS_CACHE:-$HOME/.cache/huggingface}
-export WANDB__SERVICE_WAIT=300
+python extension/probe/cache_hidden_states.py        # pre_answer / assertion / neutral
+python extension/probe/cache_answer_positions.py     # <answer>-opening positions
+python extension/probe/save_probe_direction_temp1.py # persist L16 pre_answer direction
 ```
 
-Optional:
-- `WANDB_ENTITY`
-- `CUDA_VISIBLE_DEVICES`
-
-### 6.3 Optional Modal Setup
-
-If you want to run training or evaluation remotely on Modal instead of locally:
+### 3. Deployment-time applied probes
 
 ```bash
-modal setup
+python extension/probe/probe_bestofk_offline.py        # best-of-16
+python extension/probe/probe_guided_restart.py         # budgeted restart
+python extension/probe/probe_abstention_and_hybrid.py  # abstention + majority hybrid
+python extension/probe/probe_adaptive_budget.py        # adaptive K_avg
+python extension/probe/probe_as_eval_proxy.py          # probe-mean as accuracy estimator
+python extension/probe/probe_answer_commit.py          # within-rollout block selector
+python extension/probe/probe_applied_scale_comparison.py  # 0.5B vs 1.5B
 ```
 
-The Modal launchers added in this repo are:
-- `sft_trainer/train_sft_modal.sh`
-- `ipo_trainer/train_ipo_modal.sh`
-- `rloo_trainer/train_rloo_modal.sh`
-- `evaluation/sample_modal.sh`
-
-These scripts call `modal_train.py`, which packages this project and runs the existing trainer entrypoints remotely. By default they request:
-- `H100!` GPU
-- `86400` second timeout (24 hours)
-- Modal volume `default-proj-training` for checkpoints and Hugging Face cache
-
-Useful optional overrides before launching:
+### 4. Causal steering
 
 ```bash
-export MODAL_GPU=H100!
-export MODAL_TIMEOUT_SECONDS=86400
-export MODAL_VOLUME_NAME=default-proj-training
+# Vanilla null (Section 4 of the report)
+python extension/probe/causal_steering.py \
+    --model_path <C_outcome>  --steer_vec <C_outcome_l16_pre_answer.npz> \
+    --alphas 0.0 0.5 1.0 2.0  --n_prompts 100 --n_rollouts_per_prompt 2
+
+# Post-Goodhart + specificity control (Section 6.4)
+python extension/probe/causal_steering.py \
+    --model_path <runA_final>  --steer_vec <C_outcome_l16_pre_answer.npz>     # +0.083
+python extension/probe/causal_steering.py \
+    --model_path <runA_final>  --steer_vec <C_outcome_l16_assertion_direction.npz>  # -0.015 (control)
 ```
 
-Modal artifacts are written into the mounted volume under `/vol`, for example:
-- `/vol/checkpoints/sft_model`
-- `/vol/checkpoints/dpo_checkpoints`
-- `/vol/checkpoints/rloo_checkpoints`
-- `/vol/evaluation/eval_results`
-
-To inspect or download artifacts later:
+### 5. Probe-as-RL-reward (Goodhart demonstration)
 
 ```bash
-modal volume ls default-proj-training /
-modal volume get default-proj-training checkpoints ./downloaded_checkpoints
-modal volume get default-proj-training evaluation/eval_results ./downloaded_eval_results
+# runA: init from C_outcome (delayed Goodhart)
+python extension/training/probe_reward_rloo.py --init C_outcome --mode reward
+# runB: init from C_SFT (immediate Goodhart)
+python extension/training/probe_reward_rloo.py --init C_SFT --mode reward
+# Multiplicative shaping (verifier × probe)
+python extension/training/probe_reward_rloo.py --init C_SFT --mode mult
 ```
 
-## 7. Expected Dataset Schemas
-
-The loaders assume specific column names.
-
-### 7.1 SFT (`sft_trainer/sft_dataset.py`)
-
-Required columns:
-- `query` (string prompt)
-- `completion` (string target response)
-
-### 7.2 IPO (`ipo_trainer/ipo_dataset.py`)
-
-Required columns:
-- `query`
-- `response_ws` (preferred/chosen response)
-- `response_ls` (non-preferred/rejected response)
-
-### 7.3 RLOO (`rloo_trainer/rloo_dataset.py`)
-
-Required columns:
-- `prompt`
-- `ground_truth` (dict containing at least `target` and `numbers`)
-
-### 7.4 Evaluation (`evaluation/countdown_eval.py`)
-
-Expected test split columns include:
-- `prompt`
-- `target`
-- `nums` (mapped into `ground_truth["numbers"]`)
-
-If your dataset uses different field names, update the loader code or preprocess columns before training/eval.
-
-## 8. Stage-by-Stage Workflow
-
-All commands in this section assume your current directory is `student_code`.
-
-### 8.1 SFT Stage
-
-Entry files:
-- `sft_trainer/sft.py`
-- `sft_trainer/sft_dataset.py`
-- `sft_trainer/train_sft.sh`
-- `sft_trainer/train_sft_modal.sh`
-
-Typical local command:
+### 6. Probe-best-of-K in-training selection (the hybrid that beats vanilla RLOO)
 
 ```bash
-bash sft_trainer/train_sft.sh
+python extension/training/probe_augmented_rloo.py --K 8 --top_M 4 --init C_SFT
 ```
 
-Typical Modal command:
+### 7. Probe-as-baseline (target-invariant LOO control variate)
 
-```bash
-bash sft_trainer/train_sft_modal.sh
-```
+The `--probe_baseline` flag in `rloo_trainer/rloo_update_worker.py` replaces the standard reward-mean baseline with the LOO mean of per-rollout probe values. The optimisation target remains the verifier; the probe enters only through the variance-reduction baseline. This construction is code-complete and theoretically Goodhart-free; the controlled run-time comparison against vanilla RLOO is the obvious next experiment and not in the report.
 
-Direct Python command (custom args):
+---
 
-```bash
-python sft_trainer/sft.py \
-  --model_name Qwen/Qwen2.5-0.5B \
-  --dataset_name Asap7772/cog_behav_all_strategies \
-  --output_dir checkpoints/sft \
-  --batch_size 64 \
-  --gradient_accumulation_steps 8 \
-  --num_epochs 1
-```
+## What this repository does *not* contain
 
-What you need to implement:
-- Inside `sft_trainer/sft.py`, write the `train(...)` loop:
-  - forward pass
-  - masked LM loss on response tokens (`is_response_token`)
-  - backward pass + optimizer/scheduler step
-  - logging and checkpointing
+- The CS 224R report PDF/source and personal research notes. Those are kept privately and are not pushed to this repository.
+- Trained checkpoints, cached activations, and large eval JSONs (>5 MB). Reproduce with the scripts above.
+- The probe-as-baseline empirical results; see the report's "Failed Attempts and Null Results" section — the construction is code-complete but a controlled run-time comparison is out of scope.
 
-### 8.2 IPO Stage
+---
 
-Entry files:
-- `ipo_trainer/ipo.py`
-- `ipo_trainer/ipo_dataset.py`
-- `ipo_trainer/train_ipo.sh`
-- `ipo_trainer/train_ipo_modal.sh`
+## References for the methodology
 
-Typical local command:
-
-```bash
-bash ipo_trainer/train_ipo.sh
-```
-
-Typical Modal command:
-
-```bash
-bash ipo_trainer/train_ipo_modal.sh
-```
-
-What you need to implement:
-- Inside `ipo_trainer/ipo.py`, write `train(...)` for IPO objective:
-  - compute policy log-probs on chosen/rejected
-  - compute reference log-probs
-  - compute preference loss
-  - optimize + log metrics
-
-### 8.3 RLOO Stage
-
-Entry files:
-- `rloo_trainer/rloo.py`
-- `rloo_trainer/rloo_update_worker.py`
-- `rloo_trainer/sampling_worker.py`
-- `rloo_trainer/train_rloo.sh`
-- `rloo_trainer/train_rloo_modal.sh`
-
-Typical local command:
-
-```bash
-export MODEL_NAME=path-or-hf-repo-of-initial-policy
-export DATASET_NAME=your-rloo-dataset
-bash rloo_trainer/train_rloo.sh
-```
-
-Typical Modal command:
-
-```bash
-export MODEL_NAME=path-or-hf-repo-of-initial-policy
-export DATASET_NAME=your-rloo-dataset
-bash rloo_trainer/train_rloo_modal.sh
-```
-
-What already happens in `rloo.py`:
-- Sample `group_size` responses per prompt via Ray + vLLM worker.
-- Score each response with `compute_score`.
-- Tokenize prompt/response pairs for policy update.
-- Call update worker, then save latest checkpoint.
-
-What you need to implement:
-- `RLOOUpdateWorker.update(...)` in `rloo_trainer/rloo_update_worker.py`:
-  - compute per-sample log-probs under current policy
-  - compute leave-one-out baseline and advantages
-  - add entropy and optional KL penalties
-  - backprop with gradient accumulation support
-
-Important config detail:
-- `lr_schedule='constant'` currently requires `warmup_ratio=0.0` in update worker.
-
-## 9. Evaluation Workflow
-
-Evaluation entry files:
-- `evaluation/countdown_eval.py`
-- `evaluation/sample.sh`
-- `evaluation/sample_modal.sh`
-
-Single model evaluation:
-
-```bash
-python evaluation/countdown_eval.py \
-  --model_path path-to-checkpoint-or-hf-repo \
-  --eval_dataset asingh15/countdown_tasks_3to4 \
-  --output_dir evaluation/eval_results \
-  --output_name my_eval_run
-```
-
-Single model evaluation on Modal:
-
-```bash
-modal run modal_train.py eval \
-  --model_path path-to-checkpoint-or-hf-repo \
-  --eval_dataset asingh15/countdown_tasks_3to4 \
-  --output_dir /vol/evaluation/eval_results \
-  --output_name my_eval_run
-```
-
-Multi-model script:
-
-1. Edit arrays in `evaluation/sample.sh`:
-   - `gpus`
-   - `model_paths`
-   - `output_names`
-2. Run:
-
-```bash
-bash evaluation/sample.sh
-```
-
-Multi-model Modal script:
-
-1. Edit arrays in `evaluation/sample_modal.sh`:
-   - `model_paths`
-   - `output_names`
-2. Run:
-
-```bash
-bash evaluation/sample_modal.sh
-```
-
-Outputs:
-- JSON written to `output_dir/output_name.json`
-- logs from sample script in `logs/`
-- Modal evaluation outputs are typically written to `/vol/evaluation/eval_results` inside the Modal volume.
-
-## 10. Checkpoint Upload to Hugging Face
-
-Files:
-- `sft_trainer/upload_sft.py`
-- `sft_trainer/upload_model_hf_sft.sh`
-
-Single upload example:
-
-```bash
-python sft_trainer/upload_sft.py \
-  --model_path path/to/checkpoint/model \
-  --base_model Qwen/Qwen2.5-0.5B \
-  --output_name your-hf-username/your-model-name
-```
-
-Batch upload:
-- Fill arrays in `upload_model_hf_sft.sh`, then run:
-
-```bash
-bash sft_trainer/upload_model_hf_sft.sh
-```
-
-## 11. Troubleshooting
-
-`NotImplementedError` during training:
-- Expected until you complete TODO functions listed in Section 2.
-
-Out-of-memory (OOM):
-- Reduce `batch_size`, `max_tokens`, `max_model_len`, `group_size`.
-- Increase gradient accumulation instead of per-step batch.
-
-vLLM / Ray startup issues:
-- Confirm CUDA visibility (`CUDA_VISIBLE_DEVICES`).
-- Ensure `vllm` and `ray` are installed in the active environment.
-
-Dataset key errors:
-- Verify columns match Section 7.
-
-W&B hangs or auth failures:
-- Verify `WANDB_API_KEY`.
-- Try running with `WANDB_MODE=offline` for local debugging.
-
-Modal launch issues:
-- Run `modal setup` if you have not authenticated yet.
-- Check the configured volume with `modal volume ls default-proj-training /`.
-- If your workspace has multiple Modal environments, pass `--env` to `modal run` or set `MODAL_ENVIRONMENT`.
-
-Missing evaluation results after Modal run:
-- Check `modal volume ls default-proj-training /evaluation/eval_results`.
-- Download results with `modal volume get default-proj-training evaluation/eval_results ./downloaded_eval_results`.
-
-## 12. Quick Command Cheat Sheet
-
-```bash
-# SFT local (after implementing train loop)
-bash sft_trainer/train_sft.sh
-
-# SFT on Modal
-bash sft_trainer/train_sft_modal.sh
-
-# IPO local (after implementing train loop)
-bash ipo_trainer/train_ipo.sh
-
-# IPO on Modal
-bash ipo_trainer/train_ipo_modal.sh
-
-# RLOO local (after implementing update())
-export MODEL_NAME=...
-export DATASET_NAME=...
-bash rloo_trainer/train_rloo.sh
-
-# RLOO on Modal
-export MODEL_NAME=...
-export DATASET_NAME=...
-bash rloo_trainer/train_rloo_modal.sh
-
-# Evaluate a checkpoint
-python evaluation/countdown_eval.py --model_path ... --output_name ...
-
-# Evaluate on Modal
-bash evaluation/sample_modal.sh
-```
-
-## 13. Final Notes
-
-This starter code is intentionally structured so you can focus on algorithm implementation, not project plumbing.
-
-If you are unsure where to begin, implement in this order:
-1. `sft_trainer/sft.py::train`
-2. `ipo_trainer/ipo.py::train`
-3. `rloo_trainer/rloo_update_worker.py::update`
-
-That order gives you a stable baseline, then preference tuning, then RL fine-tuning.
+The activation-addition steering protocol and matched random-direction control follow Turner et al. 2023 (ActAdd), Zou et al. 2023 (Representation Engineering), Rimsky et al. 2024 (CAA), and Arditi et al. 2024 (refusal direction). The probe-vs-causation methodological framing this project operationalises is Belinkov 2022 ("Probing Classifiers: Promises, Shortcomings, and Advances"). For the RL setup and baseline construction we follow Ahmadian et al. 2024 (RLOO) and the classical control-variate analysis of Williams 1992.
