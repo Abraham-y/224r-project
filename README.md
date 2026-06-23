@@ -1,6 +1,6 @@
 # Reading vs. Writing a Near-Oracle Internal Verifier
 
-**Stanford CS 224R class project — Abraham Yeung & Anagha Ramaswamy.**
+**Abraham Yeung & Anagha Ramaswamy.**
 
 This repository contains the code and experimental artifacts for our investigation of when a near-oracle linear correctness probe on a small language model's hidden states is safe to wire into RL training, and when it catastrophically fails. The headline finding is a **reader/writer asymmetry**: the same probe direction is excellent as a deployment selector, causally inert under intervention on the vanilla checkpoint, and a catastrophic Goodhart trap when used as the RL reward — and the difference between those outcomes is entirely determined by how much policy-gradient access the probe receives.
 
