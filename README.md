@@ -4,8 +4,6 @@
 
 This repository contains the code and experimental artifacts for our investigation of when a near-oracle linear correctness probe on a small language model's hidden states is safe to wire into RL training, and when it catastrophically fails. The headline finding is a **reader/writer asymmetry**: the same probe direction is excellent as a deployment selector, causally inert under intervention on the vanilla checkpoint, and a catastrophic Goodhart trap when used as the RL reward — and the difference between those outcomes is entirely determined by how much policy-gradient access the probe receives.
 
-The repository is organised around the **`extension/`** directory, which contains the research code that produced the experimental results. The class-provided trainer scaffolds (`sft_trainer/`, `ipo_trainer/`, `rloo_trainer/`, `evaluation/`) are kept for reproducibility, with our additions (notably the LOO probe-baseline integration in `rloo_trainer/rloo_update_worker.py`).
-
 ---
 
 ## Headline results
@@ -21,8 +19,6 @@ Working on Qwen2.5-0.5B (replicated at 1.5B) trained on Countdown arithmetic wit
 | As the **RL reward**, the probe catastrophically Goodharts in both initialisation regimes. | `runA` (init from C_outcome): delayed Goodhart, `−25 pp` first-block accuracy; `runB` (init from C_SFT): immediate Goodhart, `−22 pp`. |
 | **Mech-interp signature of Goodhart.** The same probe direction — causally inert before RL — becomes measurably causal after, while a near-orthogonal correctness-correlated direction stays null on the same checkpoint. | Probe direction Δ = `+0.083` at α=1.0; assertion direction (cosine `0.038`, AUROC `0.70`) Δ = `−0.015`. |
 | **Safe constructions** that bound or eliminate probe gradient access give either small lifts or no Goodhart. | Probe-as-baseline (LOO control variate): target-invariant. Multiplicative shaping `r = verifier × probe`: `+2.8 pp` first-block at `n=8,000`. Probe-best-of-K in-training selection: `+1.5 pp`, halves mean blocks per rollout. |
-
-Full writeup: see the CS 224R report (private; not in the repo).
 
 ---
 
@@ -60,9 +56,9 @@ extension/                       # All research-extension code lives here
 
 rloo_trainer/
 ├── rloo_update_worker.py                 # Standard RLOO update + LOO probe-baseline path
-└── ...                                   # Class-provided scaffolds
+└── ...                                   # Scaffolds
 
-sft_trainer/, ipo_trainer/                # Class-provided scaffolds (used for the SFT step only)
+sft_trainer/, ipo_trainer/                # Scaffolds (used for the SFT step only)
 
 scripts/
 ├── make_poster_figures.py                # Matplotlib PDFs for the four headline figures
@@ -146,7 +142,6 @@ The `--probe_baseline` flag in `rloo_trainer/rloo_update_worker.py` replaces the
 
 ## What this repository does *not* contain
 
-- The CS 224R report PDF/source and personal research notes. Those are kept privately and are not pushed to this repository.
 - Trained checkpoints, cached activations, and large eval JSONs (>5 MB). Reproduce with the scripts above.
 - The probe-as-baseline empirical results; see the report's "Failed Attempts and Null Results" section — the construction is code-complete but a controlled run-time comparison is out of scope.
 
