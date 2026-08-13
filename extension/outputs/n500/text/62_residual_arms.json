@@ -1,0 +1,78 @@
+{
+  "population": "clean-406",
+  "label_rule": "first_block",
+  "n_boot": 10000,
+  "seed": 0,
+  "arms": {
+    "C_outcome (verifier RL)": {
+      "path": "eval_c_outcome_FIXEDSTOP_n500.json",
+      "n_prompts": 406,
+      "n_rollouts": 6496,
+      "first_block_acc": 0.530634236453202,
+      "published": 0.5306
+    },
+    "published probe-as-reward": {
+      "path": "eval_runA_postRL_n500.json",
+      "n_prompts": 406,
+      "n_rollouts": 6496,
+      "first_block_acc": 0.23614532019704434,
+      "published": 0.2361
+    },
+    "Arm A, surface-residualised": {
+      "path": "eval_armA_residual_step100.json",
+      "n_prompts": 406,
+      "n_rollouts": 3248,
+      "first_block_acc": 0.16779556650246305,
+      "published": 0.1678
+    },
+    "Arm B, surface-only": {
+      "path": "eval_armB_surface_step100.json",
+      "n_prompts": 406,
+      "n_rollouts": 3248,
+      "first_block_acc": 0.0,
+      "published": 0.0
+    }
+  },
+  "contrasts": {
+    "Arm A, surface-residualised - published probe-as-reward": {
+      "delta_pp": -6.83497536945813,
+      "ci_lo_pp": -8.89778325123153,
+      "ci_hi_pp": -4.833743842364532,
+      "published": {
+        "delta_pp": -6.83,
+        "ci_lo_pp": -8.85,
+        "ci_hi_pp": -4.79
+      }
+    },
+    "Arm A, surface-residualised - C_outcome (verifier RL)": {
+      "delta_pp": -36.283866995073886,
+      "ci_lo_pp": -39.331896551724135,
+      "ci_hi_pp": -33.282019704433495,
+      "published": {
+        "delta_pp": -36.28,
+        "ci_lo_pp": -39.36,
+        "ci_hi_pp": -33.19
+      }
+    },
+    "Arm B, surface-only - published probe-as-reward": {
+      "delta_pp": -23.614532019704434,
+      "ci_lo_pp": -26.355064655172413,
+      "ci_hi_pp": -20.951354679802954,
+      "published": {
+        "delta_pp": -23.61,
+        "ci_lo_pp": -26.43,
+        "ci_hi_pp": -20.89
+      }
+    },
+    "Arm B, surface-only - C_outcome (verifier RL)": {
+      "delta_pp": -53.0634236453202,
+      "ci_lo_pp": -57.06588669950739,
+      "ci_hi_pp": -49.04556650246305,
+      "published": {
+        "delta_pp": -53.06,
+        "ci_lo_pp": -57.04,
+        "ci_hi_pp": -48.97
+      }
+    }
+  }
+}

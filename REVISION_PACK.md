@@ -364,11 +364,24 @@ not oversell it.
 
 ## F. Reproducibility
 
-Checkpoints are deleted and 12 scripts were removed in commit `cd8cd5e`. Nothing
-in Section 2 or 3 can currently be regenerated from the repo. Before submission,
-either restore the scripts on a branch or state plainly in the artifact note which
-results are reproducible from released data and which are not. The eval JSONs and
-the probe pickles *are* released, which is what makes §B computable — say that.
+**RESOLVED 2026-08-12.** This previously read that nothing in Section 2 or 3
+could be regenerated from the repo. That is no longer true:
+
+- the removed scripts are back (`probe_usefulness_suite.py`,
+  `firstanswer_rloo.py`, `phase2a_per_answer_correctness.py`);
+- §B, §G and §G2 are computed by `structural_baselines.py` and
+  `surface_battery.py`, both of which re-run to a zero diff against their
+  committed JSON;
+- §G4/§G5 are computed by `verify_residual_arms.py` off rollouts now fetched
+  from the Modal volume;
+- the small `.txt`/`.json` outputs are no longer gitignored, so the numbers are
+  checkable without rerunning anything.
+
+What remains unreproducible is exactly one thing, and the paper says so in
+Limitations: the withdrawn §3 causal-steering result, whose checkpoints are
+deleted. The two arms' rollout JSONs (~10 MB each) stay out of git and are
+fetched with the two `modal volume get` commands in
+`verify_residual_arms.py`'s docstring.
 
 ---
 
@@ -749,12 +762,41 @@ Let me verify:
 2. 63 - 7 = 56
 ```
 
-Mean rollout length 1095 → 2394. The policy learned to fill the answer slot with
-more correct-looking work, because `ans_len`, `ans_ops`, `n_equals` and `n_digits`
-all reward precisely that. It produced the appearance of careful arithmetic and
-zero arithmetic.
+Mean rollout length **1098 → 2390** on clean-406. *(Corrected 2026-08-12: the
+previous "1095 → 2394" paired a clean-406 baseline with an all-500 Arm B. Same
+story, one population.)* The policy learned to fill the answer slot with more
+correct-looking work, because `ans_len`, `ans_ops`, `n_equals` and `n_digits` all
+reward precisely that. It produced the appearance of careful arithmetic and zero
+arithmetic.
+
+**VERIFIED 2026-08-12.** The arm rollouts were pulled off the Modal volume
+(`evaluation/eval_results/arm{A,B}_*_step100.json`) and all four published
+accuracies recompute exactly — 0.5306 / 0.2361 / 0.1678 / 0.0000 — with the
+contrast CIs agreeing to the third digit (bootstrap seed). This is now a standing
+check: `extension/probe/verify_residual_arms.py` prints the published value beside
+each recomputed one and flags disagreement. Note one population fact the pack did
+not previously state: **the arms were evaluated at 8 responses per prompt and the
+references at 16**, so an arm contributes 3,248 rollouts against a reference's
+6,496. The bootstrap pairs on prompts and uses per-prompt means, so the contrast
+is well defined — but say it, because the raw counts differ.
 
 This is the sharpest artefact in the project. Put a rollout in a box, verbatim.
+The one the paper quotes is real and the full block is stronger than the excerpt;
+for input `[29, 17, 63, 38]`, target `68`:
+
+```
+<answer>
+Let me verify:
+1. 17 - 10 = 7
+2. 63 - 7 = 56
+3. 29 * 38 = 1102
+4. 56 - (29 * 38 / 38) = 68
+</answer>
+```
+
+Step 1 uses `10`, not in the input set. Step 3 is correct and irrelevant. Step 4
+reuses `38` and `29` and evaluates to 27 — while *asserting* 68, the target, in
+the answer position. Quote all four lines, not two.
 
 **What this licenses, and what it does not.** Licensed: occupying cheap textual
 structure is *sufficient* to destroy both a monitor and the task — no internal

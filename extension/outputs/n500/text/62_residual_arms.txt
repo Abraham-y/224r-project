@@ -1,0 +1,30 @@
+Pre-registered RL arms -- recomputed from the rollout JSONs
+  population: clean-406 (406 prompts), first-block accuracy, verifier = evaluation.countdown
+  intervals:  prompt-clustered PAIRED bootstrap, 10000 resamples, seed 0
+
+  arm                                 prompts  rollouts      acc  published   
+  ----------------------------------------------------------------------------
+  C_outcome (verifier RL)                 406      6496   0.5306     0.5306  ok
+  published probe-as-reward               406      6496   0.2361     0.2361  ok
+  Arm A, surface-residualised             406      3248   0.1678     0.1678  ok
+  Arm B, surface-only                     406      3248   0.0000     0.0000  ok
+
+  Note the rollout counts: the arms were evaluated at 8 responses per
+  prompt and the references at 16. The bootstrap below pairs on PROMPTS
+  and uses per-prompt means, so the contrast is well defined; the arms'
+  per-prompt means are simply the noisier side.
+
+  contrast                                                  delta pp           95% CI (pp)
+  ----------------------------------------------------------------------------------------
+  Arm A, surface-residualised - published probe-as-reward      -6.83   [  -8.90,   -4.83]  ok
+    published:                                                 -6.83   [  -8.85,   -4.79]
+  Arm A, surface-residualised - C_outcome (verifier RL)       -36.28   [ -39.33,  -33.28]  ok
+    published:                                                -36.28   [ -39.36,  -33.19]
+  Arm B, surface-only - published probe-as-reward             -23.61   [ -26.36,  -20.95]  ok
+    published:                                                -23.61   [ -26.43,  -20.89]
+  Arm B, surface-only - C_outcome (verifier RL)               -53.06   [ -57.07,  -49.05]  ok
+    published:                                                -53.06   [ -57.04,  -48.97]
+
+  Arm A's pre-registered prediction was that it would collapse LESS than
+  the published run. It collapsed more, outside the interval. That is a
+  falsified prediction and is reported as one.

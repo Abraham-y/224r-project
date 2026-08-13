@@ -68,16 +68,32 @@ their committed JSON. **Zero differences**, including the 10k-resample bootstrap
 Assessed ~6.5 / 7.5 / 5.5 (novelty / interest / usefulness) — defensible weak
 accept, up from a Reject verdict at the start of this work.
 
+### Arm A/B are now verifiable (2026-08-12)
+
+Pulled `arm{A,B}_*_step100.json` off `default-proj-training`
+(`evaluation/eval_results/`). All four published accuracies recompute **exactly**
+— 0.5306 / 0.2361 / 0.1678 / 0.0000 — and the four contrast CIs agree to the
+third digit. `extension/probe/verify_residual_arms.py` is now a standing check:
+it prints the published value beside each recomputed one and flags disagreement.
+
+Two things the verification turned up:
+
+- **The arms were evaluated at 8 responses per prompt, the references at 16.**
+  3,248 rollouts against 6,496. The bootstrap pairs on prompts and uses
+  per-prompt means so the contrast is fine, but the pack never said it.
+- **"1095 → 2394" mixed populations** — a clean-406 baseline against an all-500
+  Arm B. On one population it is **1098 → 2390**.
+
+The Arm B rollout the paper quotes is real, and the full four-line block is
+sharper than the two-line excerpt that was in the draft. Both the `.md` and
+`.tex` now carry it verbatim with the input and target stated.
+
 ### Still open
 
 1. **Format.** 16 pages of `\documentclass[11pt]{article}` against a workshop
    limit of 4-9 pages in the venue's own style. `neurips_2024.sty` is in the
    repo. This is a content decision (what to cut), not a mechanical one.
-2. **Arm A/B eval JSONs are not local.** They live on the Modal volume, so the
-   two newest and most load-bearing results are the two nobody can check. Pull
-   them down before the volume lapses. This is the only irreversible item.
-3. **Commit the tree.** Every corrected number lives in files that are modified
-   or untracked; a reviewer following the GitHub link to HEAD sees none of it.
+2. **Push.** Everything is committed locally; nothing has been pushed.
 
 ### What changed earlier (2026-08-08 audit)
 
