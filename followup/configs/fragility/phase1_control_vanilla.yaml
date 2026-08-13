@@ -1,0 +1,54 @@
+# Phase 1 — CONTROL arm: the same analysis on vanilla (verifier-reward) RLOO.
+#
+# Why this exists. Every Phase-1 number on the probe-RL ladder needs a null to be
+# read against. Under verifier RL the probe does NOT collapse — the paper reports
+# held-out AUROC RISING 0.912 -> 0.982 from C_SFT to C_outcome. So on this ladder
+# the prediction is evasion_gap ~ 0 at every step. If the pipeline instead
+# produces a large gap here, the pipeline is measuring an artefact (distribution
+# shift, split leakage, label rule) rather than evasion.
+#
+# It is also free: these activations were cached during the original project
+# (extension/cache/probe_cache_n500_clean406 and .../probe_cache_dynamics_optB),
+# so this control runs on a laptop with no GPU and no Modal spend.
+#
+# Caveat recorded rather than hidden: the vanilla ladder was cached at
+# temperature 0.6 / top_p 0.95 (eval regime), while the probe-RL ladder is
+# harvested at temperature 1.0 (RL regime). The control therefore bounds
+# split/label/pipeline artefacts, not sampling-regime artefacts.
+
+name: phase1_control_vanilla
+phase: phase1
+seed: 0
+seeds: [0, 1, 2]
+
+probe:
+  # The eval-regime probe, matched to the eval-regime activations of this ladder.
+  id: pre_answer_l16_eval
+  pipeline: extension/cache/steering/probe_pipeline_C_outcome_l16_pre_answer.pkl
+  direction: extension/cache/steering/C_outcome_l16_pre_answer_direction.npz
+  layer: 16
+
+label_rule: last_block
+
+split:
+  by: prompt_idx
+  val_frac: 0.3
+  seed: 0
+
+retrain:
+  linear_C: 0.1
+  fit_mlp: true
+  mlp_hidden: 256
+  mlp_early_stopping: true
+
+layers: [12, 16, 20]     # the only layers cached for the dynamics snapshots
+arms: [on_policy]        # no fixed-text arm exists for the vanilla ladder
+
+confounds:
+  enabled: true
+  strata: template_score
+
+cka:
+  enabled: false         # no row correspondence across these snapshots
+
+min_rows_per_snapshot: 200

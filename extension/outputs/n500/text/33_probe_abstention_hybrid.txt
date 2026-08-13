@@ -1,0 +1,18 @@
+Two probe-applied experiments on 0.5B C_outcome clean-406
+  Held-out balanced AUROC of </think> probe (corrected labels): 0.982
+
+=== (1) Probe-guided abstention ===
+  baseline accuracy (no abstention): 0.549
+  coverage≈0.90: T=0.00, acc=0.549
+  coverage≈0.70: T=0.02, acc=0.837
+  coverage≈0.50: T=0.86, acc=0.980
+  coverage≈0.30: T=0.98, acc=0.992
+
+=== (2) Probe + majority-vote ensemble ===
+  probe-best-of-16: acc=0.6700
+  majority-of-16: acc=0.6182
+  intersection (majority if probe>=0.5, else probe-best): acc=0.6773
+  agree-gated SELECTIVE (commit iff probe-best == majority): acc=0.8349 at coverage=0.537 (n=218)
+    NOTE: this row is selective (coverage < 1); it is NOT comparable
+    to the always-commit rows above at face value.
+  agreement rate: 53.7%

@@ -1,0 +1,25 @@
+Cross-position probe transfer matrix (L16)
+
+Cache: extension/cache/probe_cache_1.5b_clean406
+
+==============================================================================
+
+
+C_SFT:
+  train  \  eval      pre_answer   assertion     neutral
+  ------------------------------------------------------
+       pre_answer         0.853       0.640       0.537
+        assertion         0.505       0.837       0.513
+          neutral         0.599       0.665       0.557
+
+C_outcome:
+  train  \  eval      pre_answer   assertion     neutral
+  ------------------------------------------------------
+       pre_answer         0.968       0.696       0.480
+        assertion         0.816       0.822       0.509
+          neutral         0.284       0.512       0.584
+
+==============================================================================
+If diagonals > off-diagonals: the probe direction for one position
+does NOT linearly transfer to another -- evidence that pre_answer
+and assertion encode distinct correctness subspaces.

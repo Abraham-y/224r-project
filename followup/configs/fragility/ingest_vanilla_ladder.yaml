@@ -1,0 +1,55 @@
+# Ingest the ORIGINAL project's cached activations into the follow-up cache
+# layout, producing the vanilla-RLOO control ladder for Phase 1.
+#
+# This is the verifier-reward run: C_SFT -> 100 RLOO steps -> C_outcome, with
+# snapshots at steps 30/60/90 (findings.md EXP-03). The probe gets STRONGER
+# along this ladder, so it is the null against which the probe-RL ladder is read.
+#
+# Costs nothing: every .npz below already exists on disk from the original
+# project. No GPU, no Modal.
+#
+# Known heterogeneity, recorded rather than smoothed over:
+#   - steps 0 and 100 were cached over 500 prompts x 16 rollouts; steps 30/60/90
+#     over the FIRST 200 prompts of the same file. prompt_idx is consistent
+#     across all five, so the clean-406 filter and the by-prompt split apply
+#     uniformly; the middle snapshots simply have fewer rows.
+#   - all five were sampled at temp=0.6 / top_p=0.95 (eval regime), not the RL
+#     regime. This ladder therefore bounds pipeline/split/label artefacts, not
+#     sampling-regime artefacts.
+
+name: ingest_vanilla_ladder
+phase: phase0
+seed: 0
+
+run_id: vanilla_rloo_ladder      # explicit: this cache is referenced by name
+arm: on_policy
+position: pre_answer
+layers: [12, 16, 20]
+clean_only: true
+
+snapshots:
+  - step: 0
+    label: C_SFT
+    cache_prefix: extension/cache/probe_cache_n500_clean406/C_SFT
+    eval_json: eval_c_sft_n500.json
+  - step: 30
+    label: C_outcome_step_30
+    cache_prefix: extension/cache/probe_cache_dynamics_optB/C_outcome_step_30
+    eval_json: eval_c_outcome_step_30_n200.json
+  - step: 60
+    label: C_outcome_step_60
+    cache_prefix: extension/cache/probe_cache_dynamics_optB/C_outcome_step_60
+    eval_json: eval_c_outcome_step_60_n200.json
+  - step: 90
+    label: C_outcome_step_90
+    cache_prefix: extension/cache/probe_cache_dynamics_optB/C_outcome_step_90
+    eval_json: eval_c_outcome_step_90_n200.json
+  - step: 100
+    label: C_outcome
+    cache_prefix: extension/cache/probe_cache_n500_clean406/C_outcome
+    eval_json: eval_c_outcome_n500.json
+
+provenance:
+  reward: verifier (last <answer> block, 0 / 0.1 / 1.0)
+  sampling: temperature 0.6, top_p 0.95, top_k 20
+  source_experiment: findings.md EXP-03 (Option B dynamics)

@@ -1,0 +1,15 @@
+# Activation cache: large, and fully regenerable from configs/fragility/*.yaml
+# (ingest_existing_cache.py locally, harvest_ladder.py on Modal).
+acts/
+
+# Pickled probes: regenerate with build_probe_zoo.py.
+results/fragility/probe_zoo/*.pkl
+
+# Metrics parquet and figures ARE tracked. They are the append-only record the
+# paper is written from, they are small, and CLAUDE.md forbids losing them.
+# results/fragility/metrics/  <- deliberately NOT ignored
+# results/fragility/figures/  <- deliberately NOT ignored
+
+__pycache__/
+*.pyc
+.DS_Store

@@ -1,0 +1,64 @@
+# Phase 0 — harvest the EXISTING probe-as-reward checkpoint ladder (runA).
+#
+# runA = probe-as-RL-reward initialised from C_outcome ("delayed Goodhart":
+# probe and verifier track for ~30 steps, then the probe saturates to 0.99 while
+# first-block accuracy falls 0.55 -> 0.24). findings.md EXP-21.
+#
+# The 11 checkpoints (step 0,10,...,90 + final) already exist on the Modal
+# volume, so this config harvests activations off them rather than paying for a
+# fresh training run.
+
+name: phase0_harvest_runA
+phase: phase0
+seed: 0
+
+model:
+  family: qwen2.5-0.5b
+  d_model: 896
+  n_layers: 24
+
+ladder:
+  volume: default-proj-training
+  run_root: checkpoints/rloo_probe_checkpoints/rloo_probe_0.5b/probe_rloo_runA_coutcome_FINAL
+  mount_prefix: /vol
+  # Steps present as of 2026-07-30. Recorded so a later disappearance is loud.
+  expected_steps: [0, 10, 20, 30, 40, 50, 60, 70, 80, 90]
+  include_final: true          # `latest_checkpoint` recorded as step 99
+  final_step: 99
+
+probe:
+  # The exact pickle that computed runA/runB's reward (temp=1.0 rollouts,
+  # rollout-final labels, held-out balanced AUROC 0.810).
+  id: pre_answer_l16_temp1
+  pipeline: extension/cache/steering/probe_pipeline_C_outcome_l16_pre_answer_temp1.pkl
+  direction: extension/cache/steering/C_outcome_temp1_l16_direction.npz
+  layer: 16
+  position: pre_answer          # the FIRST character of the response's `</think>`
+
+# The probe layer plus three bracketing layers, to detect relocation across depth.
+layers: [12, 14, 16, 18, 20]
+
+eval_set:
+  prompts: extension/data/countdown_eval_500.jsonl
+  clean_only: true              # drop the 94 contaminated prompts -> clean-406
+  max_prompts: 406
+  rollouts_per_prompt: 8
+  # RL-time sampling regime. The probe was trained on temp=1.0 rollouts and the
+  # reward was computed on temp=1.0 rollouts; anything else moves the activation
+  # distribution and changes the frozen probe's numbers for the wrong reason.
+  temperature: 1.0
+  top_p: 1.0
+  top_k: -1
+  max_tokens: 1024
+  stop_strings: []              # NOT set: training-time sampling had no stop string
+  seed: 0
+
+arms:
+  # What the monitor actually sees: rollouts resampled from checkpoint t.
+  on_policy: true
+  # Same TEXT at every t (checkpoint-0 rollouts), forward-passed through
+  # checkpoint t. Isolates representation drift from behaviour drift and is the
+  # only arm where CKA is defined.
+  fixed_text: true
+
+max_seq_len: 2048

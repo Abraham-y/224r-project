@@ -1,0 +1,13 @@
+Per-problem AUROC correlation with CORRECTED labels
+Probe: pre_answer L16; labels: first-<answer>-block correctness
+
+  n_problems: 131
+  Pearson r(probe_drop, acc_delta) = +0.092 (p=2.94e-01)
+  Spearman r(probe_drop, acc_delta) = +0.059 (p=5.01e-01)
+  Quadrants:
+    decoupling: 21/131 (16.0%)
+    both improved: 73/131 (55.7%)
+    damage: 4/131 (3.1%)
+    noise: 11/131 (8.4%)
+  Per-problem AUROC mean: C_SFT=0.882, C_outcome=0.927
+  Per-problem probe_drop mean: -0.045

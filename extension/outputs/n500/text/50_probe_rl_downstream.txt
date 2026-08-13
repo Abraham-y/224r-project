@@ -1,0 +1,60 @@
+PROBE-RL DOWNSTREAM ANALYSIS
+
+=== C_SFT (init, no RL) (n_rollouts=6496) ===
+  n_rollouts: 6496
+  mean_blocks: 2.7143
+  pct_zero: 10.5911
+  pct_one: 28.9409
+  pct_multi: 60.4680
+  first_acc: 0.2903
+  last_acc: 0.2383
+  mean_len: 2094.0765
+
+=== vanilla C_outcome (verifier RLOO) (n_rollouts=6496) ===
+  n_rollouts: 6496
+  mean_blocks: 6.7805
+  pct_zero: 3.2943
+  pct_one: 12.6847
+  pct_multi: 84.0209
+  first_acc: 0.5503
+  last_acc: 0.4980
+  mean_len: 1968.8825
+
+=== firstanswer C_outcome' (first-block verifier RLOO) (n_rollouts=6496) ===
+  n_rollouts: 6496
+  mean_blocks: 6.3599
+  pct_zero: 6.7118
+  pct_one: 11.0991
+  pct_multi: 82.1890
+  first_acc: 0.5212
+  last_acc: 0.4683
+  mean_len: 1983.8011
+
+=== probe-RL runA (C_outcome init + temp1 probe) (n_rollouts=6496) ===
+  n_rollouts: 6496
+  mean_blocks: 15.5454
+  pct_zero: 0.0462
+  pct_one: 0.3233
+  pct_multi: 99.6305
+  first_acc: 0.2361
+  last_acc: 0.1301
+  mean_len: 2298.1733
+
+=== probe-RL runB (C_SFT init + temp1 probe) (n_rollouts=6496) ===
+  n_rollouts: 6496
+  mean_blocks: 1.2739
+  pct_zero: 0.7235
+  pct_one: 76.7857
+  pct_multi: 22.4908
+  first_acc: 0.0734
+  last_acc: 0.0724
+  mean_len: 2432.3022
+
+
+SUMMARY:
+checkpoint                                                blocks   multi%  first_acc   last_acc      len
+  C_SFT (init, no RL)                                       2.71     60.5     0.2903     0.2383     2094
+  vanilla C_outcome (verifier RLOO)                         6.78     84.0     0.5503     0.4980     1969
+  firstanswer C_outcome' (first-block verifier RLOO)        6.36     82.2     0.5212     0.4683     1984
+  probe-RL runA (C_outcome init + temp1 probe)             15.55     99.6     0.2361     0.1301     2298
+  probe-RL runB (C_SFT init + temp1 probe)                  1.27     22.5     0.0734     0.0724     2432

@@ -4,6 +4,12 @@ Probe-as-answer-selector simulation on 0.5B C_outcome clean-406 multi-answer rol
   first-block-correctness (oracle pick-first): 0.6363
   last-block-correctness (cache): 0.5740
 
-  best probe-commit threshold: 0.35
-  best probe-commit acc: 0.6609
-  GAIN over verifier-scored baseline: +0.0868
+  IN-SAMPLE (threshold tuned on these same rollouts -- optimistic):
+    best probe-commit threshold: 0.25
+    best probe-commit acc: 0.6607
+    GAIN over verifier-scored baseline: +0.0867
+
+  HELD-OUT (2-fold by prompt; threshold picked on the other fold) -- report this:
+    thresholds per fold: {0: 0.2, 1: 0.1}
+    acc: 0.6601  (n=5458)
+    GAIN over verifier-scored baseline: +0.0861

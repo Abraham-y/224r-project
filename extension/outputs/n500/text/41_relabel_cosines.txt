@@ -1,0 +1,16 @@
+Probe-direction cosines under CORRECTED labels
+
+=== Within-checkpoint cross-position cosines ===
+  C_SFT:
+    cos(pre_answer, assertion) = +0.1042
+    cos(pre_answer, neutral) = -0.0308
+    cos(assertion, neutral) = +0.0290
+  C_outcome:
+    cos(pre_answer, assertion) = +0.0364
+    cos(pre_answer, neutral) = +0.0637
+    cos(assertion, neutral) = +0.0350
+
+=== Cross-checkpoint within-position cosines ===
+  pre_answer: cos(C_SFT, C_outcome) = +0.1692
+  assertion: cos(C_SFT, C_outcome) = +0.1342
+  neutral: cos(C_SFT, C_outcome) = +0.0722

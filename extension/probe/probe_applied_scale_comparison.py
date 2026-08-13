@@ -109,8 +109,14 @@ def evaluate_scale(eval_path, cache_path, meta_path, label):
     pass1 = float(np.mean([by_p[p][0][2] for p in prompts if by_p[p]]))
     # Best-of-16 (by probe)
     bok = float(np.mean([max(by_p[p][:16], key=lambda t: t[1])[2] for p in prompts if by_p[p]]))
-    # Majority vote (true-correctness majority) for reference
-    maj = float(np.mean([int(sum(t[2] for t in by_p[p][:16]) > len(by_p[p][:16])/2) for p in prompts if by_p[p]]))
+    # ORACLE majority: "are >50% of the K rollouts correct?". This needs the
+    # answer key, so it is NOT a deployable baseline and NOT self-consistency
+    # (which votes on the answer string, no key required). Kept as a reference
+    # line only. Renamed from `maj`/"majority-of-16", which invited reading it
+    # as the self-consistency baseline -- see probe_abstention_and_hybrid.py
+    # for the real equation-voting version.
+    oracle_maj = float(np.mean([int(sum(t[2] for t in by_p[p][:16]) > len(by_p[p][:16])/2)
+                                for p in prompts if by_p[p]]))
     # Abstention at 50% coverage
     first_probes = [(p, by_p[p][0][1], by_p[p][0][2]) for p in prompts if by_p[p]]
     first_probes.sort(key=lambda t: -t[1])
@@ -137,7 +143,7 @@ def evaluate_scale(eval_path, cache_path, meta_path, label):
 
     print(f"  pass@1 (first-block of rollout 0)         : {pass1:.4f}")
     print(f"  best-of-16 (by probe)                     : {bok:.4f}   (+{100*(bok-pass1):+.1f} pp)")
-    print(f"  majority-of-16 (by first-block label)     : {maj:.4f}")
+    print(f"  ORACLE majority-of-16 (needs answer key)  : {oracle_maj:.4f}")
     print(f"  abstain at coverage~50% (top-half probe)  : {abst50:.4f}")
     print(f"  abstain at coverage~33% (top-third)       : {abst33:.4f}")
     print(f"  probe-guided restart B=16 T=0.95          : acc={r_acc:.4f}, n_used={r_used:.2f}")
@@ -149,7 +155,7 @@ def evaluate_scale(eval_path, cache_path, meta_path, label):
         "auroc": bal_auc,
         "pass1": pass1,
         "best_of_16": bok,
-        "majority": maj,
+        "oracle_majority": oracle_maj,
         "abstain50": abst50,
         "abstain33": abst33,
         "restart_acc": r_acc,
@@ -163,7 +169,7 @@ def main():
 
     print("\n===== Cross-scale summary =====")
     print(f"  {'metric':<28} {'0.5B':>10} {'1.5B':>10}   delta")
-    for k in ["pass1", "best_of_16", "majority", "abstain50", "abstain33", "restart_acc", "auroc"]:
+    for k in ["pass1", "best_of_16", "oracle_majority", "abstain50", "abstain33", "restart_acc", "auroc"]:
         a = r05[k]; b = r15[k]
         print(f"  {k:<28} {a:>10.4f} {b:>10.4f}   {b-a:+.4f}")
 
@@ -178,7 +184,7 @@ def main():
             f.write("\n")
         f.write("Summary table:\n")
         f.write(f"  {'metric':<28} {'0.5B':>10} {'1.5B':>10}   delta\n")
-        for k in ["pass1", "best_of_16", "majority", "abstain50", "abstain33", "restart_acc", "auroc"]:
+        for k in ["pass1", "best_of_16", "oracle_majority", "abstain50", "abstain33", "restart_acc", "auroc"]:
             a = r05[k]; b = r15[k]
             f.write(f"  {k:<28} {a:>10.4f} {b:>10.4f}   {b-a:+.4f}\n")
     print(f"\nwrote {OUT_TXT}")

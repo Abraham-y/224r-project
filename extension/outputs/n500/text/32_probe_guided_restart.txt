@@ -4,7 +4,7 @@ Probe-guided budgeted restart on 0.5B C_outcome clean-406
 
 BASELINES:
   pass@1: 0.5493
-  majority-vote-of-K: 0.5862
+  ORACLE majority-of-K (needs answer key): 0.5862
   best-of-2: acc=0.6182, n_used=2.00
   best-of-4: acc=0.6355, n_used=4.00
   best-of-8: acc=0.6502, n_used=8.00
@@ -32,4 +32,8 @@ RESTART SWEEP:
   B=16, T=0.85: acc=0.6724, n_used=5.46
   B=16, T=0.95: acc=0.6749, n_used=6.27
 
-BEST: B=16, T=0.95: acc=0.6749, n_used=6.27
+BEST (IN-SAMPLE, (B,T) maximised on these same prompts -- optimistic):
+  B=16, T=0.95: acc=0.6749, n_used=6.27
+BEST (HELD-OUT, 2-fold by prompt) -- report this:
+  picks per fold: {0: {'B': 16, 'T': 0.3}, 1: {'B': 16, 'T': 0.95}}
+  acc=0.6675, n_used=5.54 (n_prompts=406)

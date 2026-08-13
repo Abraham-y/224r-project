@@ -1,0 +1,17 @@
+{
+  "checkpoint": "C_outcome",
+  "layer": 16,
+  "n_prompts": 380,
+  "pass@1": 0.49736842105263157,
+  "random_pick_avg": 0.516885924747767,
+  "majority_of_K": 0.5368421052631579,
+  "oracle_pass@K": 0.6236842105263158,
+  "probe_best_of_K": 0.6052631578947368,
+  "probe_top2_mean": 0.5921052631578947,
+  "probe_top3_mean": 0.5885964912280701,
+  "probe_top5_mean": 0.5836842105263158,
+  "probe_worst_of_K": 0.3394736842105263,
+  "gain_probe_vs_pass1": 0.10789473684210527,
+  "gain_probe_vs_majority": 0.06842105263157894,
+  "per_problem_auroc_mean": 0.9014127542981709
+}

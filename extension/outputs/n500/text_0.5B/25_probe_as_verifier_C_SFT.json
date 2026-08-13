@@ -1,0 +1,17 @@
+{
+  "checkpoint": "C_SFT",
+  "layer": 16,
+  "n_prompts": 405,
+  "pass@1": 0.49135802469135803,
+  "random_pick_avg": 0.2518769604880716,
+  "majority_of_K": 0.2123456790123457,
+  "oracle_pass@K": 0.6592592592592592,
+  "probe_best_of_K": 0.362962962962963,
+  "probe_top2_mean": 0.36666666666666664,
+  "probe_top3_mean": 0.3596707818930041,
+  "probe_top5_mean": 0.34765432098765436,
+  "probe_worst_of_K": 0.07901234567901234,
+  "gain_probe_vs_pass1": -0.12839506172839504,
+  "gain_probe_vs_majority": 0.1506172839506173,
+  "per_problem_auroc_mean": 0.7223232079237965
+}

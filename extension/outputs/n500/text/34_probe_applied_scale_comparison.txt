@@ -1,0 +1,37 @@
+Cross-scale probe-applied comparison: 0.5B vs 1.5B C_outcome
+
+=== 0.5B C_outcome ===
+  label: 0.5B C_outcome
+  n_prompts: 406
+  pos_frac: 0.5669203932762449
+  auroc: 0.9819719104505666
+  pass1: 0.5492610837438424
+  best_of_16: 0.6699507389162561
+  majority: 0.5862068965517241
+  abstain50: 0.9802955665024631
+  abstain33: 0.9925925925925926
+  restart_acc: 0.6748768472906403
+  restart_used: 6.266009852216749
+
+=== 1.5B C_outcome ===
+  label: 1.5B C_outcome
+  n_prompts: 406
+  pos_frac: 0.5165133779264214
+  auroc: 0.9737757358967876
+  pass1: 0.5172413793103449
+  best_of_16: 0.603448275862069
+  majority: 0.541871921182266
+  abstain50: 0.9310344827586207
+  abstain33: 0.9555555555555556
+  restart_acc: 0.6009852216748769
+  restart_used: 5.724137931034483
+
+Summary table:
+  metric                             0.5B       1.5B   delta
+  pass1                            0.5493     0.5172   -0.0320
+  best_of_16                       0.6700     0.6034   -0.0665
+  majority                         0.5862     0.5419   -0.0443
+  abstain50                        0.9803     0.9310   -0.0493
+  abstain33                        0.9926     0.9556   -0.0370
+  restart_acc                      0.6749     0.6010   -0.0739
+  auroc                            0.9820     0.9738   -0.0082

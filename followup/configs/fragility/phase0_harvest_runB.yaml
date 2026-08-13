@@ -1,0 +1,53 @@
+# Phase 0 — harvest the EXISTING probe-as-reward checkpoint ladder (runB).
+#
+# runB = probe-as-RL-reward initialised from C_SFT ("immediate Goodhart": probe
+# 0.47 -> 0.73 within 10 steps, verifier 0.30 -> 0.21, final first-block accuracy
+# 0.073). findings.md EXP-21.
+#
+# runA and runB game the SAME probe with opposite structural strategies (runA:
+# 15.5 answer blocks per rollout; runB: 1.27). Harvesting both is what makes the
+# mechanism question answerable: any account of the collapse has to explain both.
+
+name: phase0_harvest_runB
+phase: phase0
+seed: 0
+
+model:
+  family: qwen2.5-0.5b
+  d_model: 896
+  n_layers: 24
+
+ladder:
+  volume: default-proj-training
+  run_root: checkpoints/rloo_probe_checkpoints/rloo_probe_0.5b/probe_rloo_runB_csft_FINAL
+  mount_prefix: /vol
+  expected_steps: [0, 10, 20, 30, 40, 50, 60, 70, 80, 90]
+  include_final: true
+  final_step: 99
+
+probe:
+  id: pre_answer_l16_temp1
+  pipeline: extension/cache/steering/probe_pipeline_C_outcome_l16_pre_answer_temp1.pkl
+  direction: extension/cache/steering/C_outcome_temp1_l16_direction.npz
+  layer: 16
+  position: pre_answer
+
+layers: [12, 14, 16, 18, 20]
+
+eval_set:
+  prompts: extension/data/countdown_eval_500.jsonl
+  clean_only: true
+  max_prompts: 406
+  rollouts_per_prompt: 8
+  temperature: 1.0
+  top_p: 1.0
+  top_k: -1
+  max_tokens: 1024
+  stop_strings: []
+  seed: 0
+
+arms:
+  on_policy: true
+  fixed_text: true
+
+max_seq_len: 2048

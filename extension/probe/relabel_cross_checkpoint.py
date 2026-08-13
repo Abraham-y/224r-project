@@ -25,15 +25,27 @@ from sklearn.metrics import roc_auc_score
 warnings.filterwarnings("ignore")
 
 import argparse as _argparse
+
+# Defaults must exist BEFORE the parser references them. (Previously these were
+# assigned after the add_argument calls, which raised NameError at import time
+# and made this script unrunnable.)
+_DEFAULT_CACHE_DIR = "extension/cache/probe_cache_n500_clean406"
+_DEFAULT_EVAL_SFT = "eval_c_sft_n500.json"
+_DEFAULT_EVAL_OUT = "eval_c_outcome_n500.json"
+_DEFAULT_TOKENIZER = "asingh15/qwen-sft-countdown-defaultproj"
+
 _ap = _argparse.ArgumentParser()
-_ap.add_argument("--cache_dir", default="extension/cache/probe_cache_n500_clean406")
-_ap.add_argument("--eval_sft", default=EVAL_SFT_PATH)
-_ap.add_argument("--eval_outcome", default=EVAL_OUT_PATH)
+_ap.add_argument("--cache_dir", default=_DEFAULT_CACHE_DIR)
+_ap.add_argument("--eval_sft", default=_DEFAULT_EVAL_SFT)
+_ap.add_argument("--eval_outcome", default=_DEFAULT_EVAL_OUT)
+_ap.add_argument("--tokenizer", default=_DEFAULT_TOKENIZER)
+_ap.add_argument("--out", default="extension/outputs/n500/text/40_relabel_cross_checkpoint.txt")
 _args, _unknown = _ap.parse_known_args()
 CACHE_DIR = _args.cache_dir
 EVAL_SFT_PATH = _args.eval_sft
 EVAL_OUT_PATH = _args.eval_outcome
-OUT = "extension/outputs/n500/text/40_relabel_cross_checkpoint.txt"
+TOKENIZER_NAME = _args.tokenizer
+OUT = _args.out
 _ANSWER_OPEN_RE = re.compile(r"<answer>(.*?)</answer>", re.DOTALL)
 
 
@@ -61,29 +73,55 @@ def first_block_labels(eval_path):
     return labs
 
 
-def next_block_labels_assertion(meta, eval_rows):
+def next_block_labels_assertion(meta, eval_rows, tokenizer):
     """For assertion-position rows, label by NEXT <answer> block correctness
-    after that row's tok_idx."""
+    after that row's tok_idx.
+
+    This maps tok_idx -> character offset via the tokenizer's offset_mapping on
+    (prompt + response), exactly as relabel_full_grid.py and
+    relabel_redo_downstream.py do, then takes the first <answer> block opening
+    strictly after that character position.
+
+    The earlier implementation ignored tok_idx entirely and labelled every
+    assertion row by the FIRST <answer> block, which is a different label
+    definition from the sibling relabel scripts and made the assertion row of
+    this transfer table incomparable with the rest of the paper.
+    """
     labs = []
+    offsets_cache: dict[tuple[int, int], list[tuple[int, int]]] = {}
+    n_no_next = 0
     for entry in meta:
         p = int(entry["prompt_idx"]); r = int(entry["resp_idx"])
         tok = int(entry["tok_idx"])
-        resp = eval_rows[p]["response"][r]
-        target = int(eval_rows[p]["target"]); nums = list(eval_rows[p]["nums"])
-        ms = list(_ANSWER_OPEN_RE.finditer(resp))
-        # find first <answer> block whose start offset is > tok_idx (assertion tokens
-        # come BEFORE answer commits; we want the next commit's correctness)
-        # tok_idx is a token index; we approximate via character position by char-count
-        # since assertion tokens are inside <think>, we want the first <answer> that follows
-        # For simplicity: if any matches exist, the assertion-position label is the next-block label.
-        # If the assertion-pos's tok_idx position can be mapped to character offset, use the
-        # first match whose start > that offset. As a robust default, fall back to first match.
-        if not ms:
-            labs.append(0); continue
-        # Match by first if tok_idx is small; otherwise match the appropriate one.
-        # Simplification: take the FIRST <answer> block as the "next commit after assertion"
-        # (assertion tokens are inside <think>, before the first commit anyway).
-        labs.append(int(check_block(ms[0].group(1), target, nums)))
+        row = eval_rows[p]
+        prompt_text = row["prompt"]
+        resp = row["response"][r]
+        target = int(row["target"]); nums = list(row["nums"])
+        scored_correct = int(float(row["scores"][r]) == 1.0)
+
+        # Block openings, in char offsets of (prompt + response).
+        blocks = [(len(prompt_text) + m.start(), check_block(m.group(1), target, nums))
+                  for m in _ANSWER_OPEN_RE.finditer(resp)]
+        if not blocks:
+            labs.append(scored_correct); n_no_next += 1; continue
+
+        if (p, r) not in offsets_cache:
+            enc = tokenizer(prompt_text + resp, return_offsets_mapping=True,
+                            truncation=True, max_length=2048)
+            offsets_cache[(p, r)] = [(int(s), int(e)) for s, e in enc["offset_mapping"]]
+        offs = offsets_cache[(p, r)]
+        if tok >= len(offs):
+            labs.append(scored_correct); n_no_next += 1; continue
+        char_pos = offs[tok][0]
+
+        nxt = next((bc for char_open, bc in blocks if char_open > char_pos), None)
+        if nxt is None:
+            labs.append(scored_correct); n_no_next += 1
+        else:
+            labs.append(int(nxt))
+    if n_no_next:
+        print(f"    [assertion labels] {n_no_next}/{len(meta)} rows had no following "
+              f"<answer> block; fell back to the verifier's rollout-final score.")
     return np.array(labs, dtype=np.int32)
 
 
@@ -108,8 +146,11 @@ def main():
     labs_out = first_block_labels(EVAL_OUT_PATH)
     eval_sft = [json.loads(l) for l in open(EVAL_SFT_PATH) if l.strip()]
     eval_out = [json.loads(l) for l in open(EVAL_OUT_PATH) if l.strip()]
+    tokenizer = None  # loaded lazily; only the assertion position needs it
     out_lines = ["Cross-checkpoint probe transfer matrix with CORRECTED labels",
                  "Position: L16; off-diagonals trained on full C_X, tested on C_Y",
+                 f"Labels: pre_answer = first-<answer>-block correctness; "
+                 f"assertion = correctness of the NEXT <answer> block after the cached token",
                  ""]
 
     for kind in ["pre_answer", "assertion"]:
@@ -120,8 +161,12 @@ def main():
             y_s = np.array([labs_sft[(int(x['prompt_idx']),int(x['resp_idx']))] for x in m_s], dtype=np.int32)
             y_o = np.array([labs_out[(int(x['prompt_idx']),int(x['resp_idx']))] for x in m_o], dtype=np.int32)
         else:
-            y_s = next_block_labels_assertion(m_s, eval_sft)
-            y_o = next_block_labels_assertion(m_o, eval_out)
+            if tokenizer is None:
+                from transformers import AutoTokenizer
+                print(f"[cross-ckpt] loading tokenizer {TOKENIZER_NAME} for assertion labels", flush=True)
+                tokenizer = AutoTokenizer.from_pretrained(TOKENIZER_NAME, use_fast=True)
+            y_s = next_block_labels_assertion(m_s, eval_sft, tokenizer)
+            y_o = next_block_labels_assertion(m_o, eval_out, tokenizer)
         g_s = np.array([int(x['prompt_idx']) for x in m_s])
         g_o = np.array([int(x['prompt_idx']) for x in m_o])
 

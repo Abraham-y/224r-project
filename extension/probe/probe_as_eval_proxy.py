@@ -107,6 +107,39 @@ def main():
     print(f"  Probe-estimated (mean probe across rollouts, no thresh): {est_acc_probe_mean:.4f}")
     print(f"  Probe-estimated (per-prompt mean probe >= 0.5 vote): {est_acc_probe_thresh:.4f}")
     print(f"  Error |est - true|: probe-mean {abs(est_acc_probe_mean - true_acc):.4f}, probe-vote {abs(est_acc_probe_thresh - true_acc):.4f}")
+
+    # ---- MANDATORY NULL CONTROL for the probe-mean estimate -----------------
+    # A logistic regression with an intercept has mean fitted probability equal
+    # to the base rate (that is its score equation), and CV folds inherit it. So
+    # "mean probe ~= dataset accuracy" is close to guaranteed and says nothing
+    # about probe quality. Re-run the identical pipeline on PURE NOISE features
+    # of the same shape: if the noise probe matches the accuracy about as well,
+    # the headline is a property of logistic regression, not of the probe.
+    rng_null = np.random.RandomState(0)
+    X_null = rng_null.randn(*X.shape).astype(np.float32)
+    scores_null = np.full(len(y_new), np.nan)
+    for tr, te in GroupKFold(5).split(X_null, y_new, groups):
+        p = Pipeline([("sc", StandardScaler()), ("lr", LogisticRegression(C=0.1, max_iter=2000))])
+        p.fit(X_null[tr], y_new[tr])
+        scores_null[te] = p.predict_proba(X_null[te])[:, 1]
+    by_p_null = defaultdict(list)
+    for i, m in enumerate(meta):
+        if np.isnan(scores_null[i]):
+            continue
+        by_p_null[int(m["prompt_idx"])].append(scores_null[i])
+    est_null = float(np.mean([np.mean(by_p_null[p]) for p in sorted(by_p_null)]))
+    from sklearn.metrics import roc_auc_score as _auc
+    m_null = ~np.isnan(scores_null)
+    auroc_null = float(_auc(y_new[m_null], scores_null[m_null]))
+    print(f"\n  [NULL CONTROL] same pipeline on random-noise features:")
+    print(f"    noise-probe AUROC:        {auroc_null:.4f}  (chance)")
+    print(f"    noise-probe mean estimate:{est_null:.4f}  vs true {true_acc:.4f}  "
+          f"-> |error| = {abs(est_null - true_acc)*100:.2f} pp")
+    print(f"    real-probe |error| = {abs(est_acc_probe_mean - true_acc)*100:.2f} pp")
+    if abs(est_null - true_acc) <= abs(est_acc_probe_mean - true_acc):
+        print(f"    >>> The NOISE probe matches dataset accuracy at least as well as the real")
+        print(f"    >>> probe. This experiment measures logistic-regression calibration, not")
+        print(f"    >>> probe quality. Do not report it as evidence about the probe.")
     # Per-rollout proxy
     proxy_acc_per_rollout = float(np.nanmean(scores))
     print(f"  Per-rollout probe-mean (pool all rollouts equally): {proxy_acc_per_rollout:.4f}")
@@ -114,6 +147,11 @@ def main():
     out.append(f"  True dataset acc: {true_acc:.4f}")
     out.append(f"  Probe-mean estimate (per-prompt mean): {est_acc_probe_mean:.4f} (diff {est_acc_probe_mean-true_acc:+.4f})")
     out.append(f"  Probe-vote estimate (per-prompt mean >= 0.5): {est_acc_probe_thresh:.4f} (diff {est_acc_probe_thresh-true_acc:+.4f})")
+    out.append(f"  NULL CONTROL (identical pipeline, random-noise features):")
+    out.append(f"    noise-probe AUROC {auroc_null:.4f} (chance); "
+               f"noise-probe estimate {est_null:.4f} (diff {est_null-true_acc:+.4f})")
+    out.append(f"    -> the probe-mean estimate is a logistic-regression calibration")
+    out.append(f"       identity, not evidence about probe quality.")
 
     # (E) Failure-mode diagnostic
     print("\n=== (E) Probe failure-mode diagnostic ===")

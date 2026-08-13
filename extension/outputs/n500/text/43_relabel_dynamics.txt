@@ -1,0 +1,11 @@
+Option B dynamics with CORRECTED labels
+
+  C_SFT: pre=0.912, ass=0.885, gap=+0.027, mean_blocks=3.03
+  step_30: pre=0.907, ass=0.867, gap=+0.040, mean_blocks=4.36
+  step_60: pre=0.962, ass=0.914, gap=+0.048, mean_blocks=4.65
+  step_90: pre=0.971, ass=0.835, gap=+0.136, mean_blocks=7.35
+  C_outcome: pre=0.982, ass=0.896, gap=+0.086, mean_blocks=6.98
+
+Pearson  r(mean_blocks, gap) across snapshots: r=+0.931 (p=2.15e-02, n=5)
+Spearman rho(mean_blocks, gap):                rho=+1.000 (p=0.017 [exact permutation, 120 orderings], n=5)
+  !! DESCRIPTIVE ONLY: n = number of snapshots, not rollouts; the snapshots come from two different eval sets (n500 clean-406 vs n200) and are successive checkpoints of one run, so they are neither independent nor identically sampled. Do not quote this p-value as evidence.

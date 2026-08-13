@@ -1,0 +1,47 @@
+# Phase 1 — evasion vs corruption vs confound.
+#
+# Every analysis choice below is fixed ONCE for the whole phase. Nothing here may
+# be tuned per checkpoint (followup/CLAUDE.md).
+
+name: phase1_default
+phase: phase1
+seed: 0
+seeds: [0, 1, 2]        # 3 seeds for any claim that goes in the paper
+
+probe:
+  id: pre_answer_l16_temp1
+  pipeline: extension/cache/steering/probe_pipeline_C_outcome_l16_pre_answer_temp1.pkl
+  direction: extension/cache/steering/C_outcome_temp1_l16_direction.npz
+  layer: 16
+
+# Headline label rule. `last_block` == verifier score 1.0, which is both what
+# vanilla RLOO rewards and the rule the reward probe was fit on
+# (probe_pipeline_temp1_meta.json). `first_block` is computed and stored too, so
+# the paper's other convention stays available without a re-run.
+label_rule: last_block
+
+split:
+  by: prompt_idx        # rollouts of one problem never straddle train/val
+  val_frac: 0.3
+  seed: 0               # NOT the run seed: the split must be identical for all t
+
+retrain:
+  linear_C: 0.1         # matches the original probe recipe, so frozen and
+                        # retrained probes are the same model class
+  fit_mlp: true
+  mlp_hidden: 256
+  mlp_early_stopping: true
+
+layers: [12, 14, 16, 18, 20]
+arms: [on_policy, fixed_text]
+
+confounds:
+  enabled: true         # H0: the structural-template control
+  strata: template_score
+
+cka:
+  enabled: true
+  arm: fixed_text       # CKA needs row correspondence; undefined on-policy
+  reference_step: 0
+
+min_rows_per_snapshot: 200   # below this, metrics are written as NaN, not dropped

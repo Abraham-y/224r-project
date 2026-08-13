@@ -79,7 +79,29 @@ base_image = (
 app = modal.App(APP_NAME)
 
 
+def _require_script(script_path: str) -> None:
+    """Fail fast, and legibly, if an entrypoint no longer exists.
+
+    Several routes below point at scripts that were pruned in cd8cd5e
+    ("prune retracted experiments"). Without this check `subprocess.run` just
+    raises a bare "can't open file" from inside a Modal container, minutes after
+    launch and after the image has been built.
+    """
+    full = Path(REMOTE_PROJECT_ROOT) / script_path
+    local = LOCAL_PROJECT_ROOT / script_path
+    if full.exists() or local.exists():
+        return
+    raise SystemExit(
+        f"\nEntrypoint not found: {script_path}\n"
+        f"  This experiment's script was removed from the repo (see the "
+        f"'prune retracted experiments' commit).\n"
+        f"  Recover it with:  git show cd8cd5e^:{script_path} > {script_path}\n"
+        f"  or drop this route from modal_train.py if the experiment is retired.\n"
+    )
+
+
 def _run_training(script_path: str, trainer_args: list[str]) -> str:
+    _require_script(script_path)
     vol_root = Path(REMOTE_VOLUME_ROOT)
     vol_root.mkdir(parents=True, exist_ok=True)
     (vol_root / "cache" / "huggingface" / "datasets").mkdir(parents=True, exist_ok=True)
@@ -110,6 +132,7 @@ def _run_training(script_path: str, trainer_args: list[str]) -> str:
 
 
 def _run_eval(eval_args: list[str]) -> str:
+    _require_script("evaluation/countdown_eval.py")
     vol_root = Path(REMOTE_VOLUME_ROOT)
     vol_root.mkdir(parents=True, exist_ok=True)
     (vol_root / "cache" / "huggingface" / "datasets").mkdir(parents=True, exist_ok=True)
@@ -498,10 +521,35 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+# Routes whose scripts were pruned in cd8cd5e. Kept so the names still resolve
+# (and so `git show` can restore them), but flagged here and checked before any
+# GPU is provisioned.
+RETIRED_ENTRYPOINTS = {
+    "prompt_difficulty": "extension/probe/prompt_difficulty_probe.py",
+    "ramble_penalty_rloo": "extension/training/ramble_penalty_rloo.py",
+    "sft_probe_filtered": "extension/training/sft_probe_filtered.py",
+    "train_answer_probe": "extension/probe/train_answer_probe.py",
+    "elicit_confidence": "extension/probe/elicit_verbalized_confidence.py",
+    "token_logprob_confidence": "extension/probe/elicit_token_logprob_confidence.py",
+    "cache_all_thinkclose": "extension/probe/cache_all_think_close.py",
+    "probe_behavioral": "extension/probe/probe_behavioral_correlation.py",
+}
+
+
 @app.local_entrypoint()
 def main(*raw_args: str) -> None:
     parser = _build_parser()
     args = parser.parse_args(list(raw_args))
+
+    # Check locally, before spawning anything, so a missing script costs zero
+    # GPU-minutes and produces an actionable message.
+    script = RETIRED_ENTRYPOINTS.get(args.trainer)
+    if script and not (LOCAL_PROJECT_ROOT / script).exists():
+        raise SystemExit(
+            f"\n'{args.trainer}' points at {script}, which was pruned from the repo.\n"
+            f"  Restore it:  git show cd8cd5e^:{script} > {script}\n"
+            f"  Or remove the '{args.trainer}' route from modal_train.py.\n"
+        )
 
     trainer_args = list(args.trainer_args)
     if trainer_args[:1] == ["--"]:

@@ -40,6 +40,8 @@ class RLOOUpdateWorker:
         warmup_ratio=0.0,
         num_training_steps=250,
         probe_topk_M=None,
+        probe_aug_lambda=None,
+        probe_topk_renormalize=False,
     ):
         self.model_path = model_path
         self.ref_model_path = ref_model_path if ref_model_path is not None else model_path
@@ -62,6 +64,21 @@ class RLOOUpdateWorker:
             raise NotImplementedError("Warmup ratio > 0 is not supported for constant learning rate schedule")
         self.num_training_steps = num_training_steps
         self.probe_topk_M = probe_topk_M  # if set, only top-M (by probe value) per group contribute to gradient
+        self.probe_topk_renormalize = probe_topk_renormalize
+        # lambda-mix for the probe-augmented LOO baseline. Passed explicitly by
+        # rloo.py; the PROBE_AUG_LAMBDA env var remains as a fallback for older
+        # launchers, but relying on it silently is a footgun -- if the var fails
+        # to reach this (separate, Ray-spawned) process the run degrades to
+        # lambda=0, i.e. the PURE probe baseline, which is a different
+        # experiment, with no error raised. So: resolve once, here, and log it.
+        if probe_aug_lambda is None:
+            env_val = os.environ.get("PROBE_AUG_LAMBDA")
+            self.probe_aug_lambda = float(env_val) if env_val is not None else 0.0
+            self._lambda_source = f"env PROBE_AUG_LAMBDA={env_val!r}" if env_val is not None else "default"
+        else:
+            self.probe_aug_lambda = float(probe_aug_lambda)
+            self._lambda_source = "explicit ctor arg"
+        self._logged_baseline_config = False
 
     def tear_down(self):
         """Release model/optimizer objects and clear GPU memory."""
@@ -255,6 +272,14 @@ class RLOOUpdateWorker:
             # optimization target stays the true reward: variance reduction, no
             # Goodhart (contrast with reward=probe).
             grouped_pb = torch.as_tensor(probe_baseline, dtype=torch.float32, device=device).view(-1, self.group_size)
+            if not self._logged_baseline_config:
+                if self.probe_topk_M is not None and 0 < self.probe_topk_M < self.group_size:
+                    print(f"[rloo_update_worker] probe path: TOP-M gating, M={self.probe_topk_M}/"
+                          f"{self.group_size}, renormalize={self.probe_topk_renormalize}", flush=True)
+                else:
+                    print(f"[rloo_update_worker] probe path: lambda-mix baseline, "
+                          f"lambda={self.probe_aug_lambda} (source: {self._lambda_source})", flush=True)
+                self._logged_baseline_config = True
             if self.probe_topk_M is not None and 0 < self.probe_topk_M < self.group_size:
                 # Probe-best-of-K within group: gradient only flows through the
                 # top-M (by probe value) of each group. Reward stays verifier;
@@ -265,13 +290,13 @@ class RLOOUpdateWorker:
                 group_sum = grouped_rewards.sum(dim=1, keepdim=True)
                 baseline = (group_sum - grouped_rewards)/(self.group_size - 1)
             else:
-                # Optional lambda-mix: baseline = LOO over (lam*R + (1-lam)*probe).
-                # lam=0 -> pure probe baseline (Anagha's original path).
-                # lam=1 -> vanilla RLOO LOO-over-rewards.
-                # lam in (0,1) -> smooth interpolation (set by probe_augmented_rloo.py
-                # via PROBE_AUG_LAMBDA env var, default 0.0 for backward compat).
-                import os as _os
-                _lam = float(_os.environ.get("PROBE_AUG_LAMBDA", "0.0"))
+                # lambda-mix: baseline = LOO over (lam*R + (1-lam)*probe).
+                # lam=0 -> pure probe baseline; lam=1 -> vanilla RLOO
+                # LOO-over-rewards; lam in (0,1) -> smooth interpolation.
+                # Resolved once in __init__ (explicit ctor arg, else env var,
+                # else 0.0) and logged above, so a lost env var is visible in
+                # the log rather than silently changing the experiment.
+                _lam = self.probe_aug_lambda
                 if _lam == 0.0:
                     pb_sum = grouped_pb.sum(dim=1, keepdim=True)
                     baseline = (pb_sum - grouped_pb)/(self.group_size - 1)
@@ -285,6 +310,15 @@ class RLOOUpdateWorker:
         advantages = (grouped_rewards - baseline)
         if topk_mask is not None:
             advantages = advantages * topk_mask  # zero out bottom (G - M) per group
+            # CONFOUND: pg_loss below is a .mean() over all G rollouts, so with
+            # (G - M) advantages zeroed the top-M arm takes only ~M/G of vanilla
+            # RLOO's gradient magnitude at the same learning rate. Any
+            # top-M-vs-vanilla accuracy comparison at matched lr is therefore
+            # partly a comparison of effective step sizes, not just of the
+            # selection rule. --probe_topk_renormalize rescales to match.
+            # Default stays False so previously-run experiments reproduce.
+            if self.probe_topk_renormalize:
+                advantages = advantages * (self.group_size / float(self.probe_topk_M))
         advantages = advantages.reshape(-1)
 
         if sample_log_probs is not None:

@@ -1,0 +1,42 @@
+### Vanilla C_outcome (probe = optimized pre_answer direction)
+  file: extension/outputs/n500/causal_steering_full.jsonl
+  50 prompts, 97 prefixes, baseline acc 0.577 [0.448, 0.701]  (cluster bootstrap on prompt_idx, B=10000)
+
+  alpha |         steer acc [95% CI] |          rand acc [95% CI] |             Delta [95% CI] |  p(D>0) | p(D>band) |  McNemar
+  ----------------------------------------------------------------------------------------------------------------------------------
+    0.5 |   0.567 [+0.433,+0.694] |   0.639 [+0.510,+0.765] |  -0.072 [-0.140,-0.010] |   0.996 |     0.999 |    0.065
+    1.0 |   0.598 [+0.464,+0.727] |   0.577 [+0.443,+0.710] |  +0.021 [+0.000,+0.052] |   0.131 |     0.395 |    0.625
+    2.0 |   0.515 [+0.394,+0.636] |   0.546 [+0.421,+0.670] |  -0.031 [-0.115,+0.052] |   0.804 |     0.867 |    0.629
+
+  p(D>0): one-sided bootstrap prob that the true Delta <= 0 (small = robustly positive).
+  p(D>band): bootstrap prob that Delta <= +0.02, the vanilla null-band upper edge.
+  McNemar: exact two-sided p on paired (steered-correct/rand-wrong) vs (rand-correct/steered-wrong).
+
+### Post-Goodhart runA (probe = optimized pre_answer direction)
+  file: causal_steering_runA_postRL.jsonl
+  100 prompts, 194 prefixes, baseline acc 0.237 [0.169, 0.309]  (cluster bootstrap on prompt_idx, B=10000)
+
+  alpha |         steer acc [95% CI] |          rand acc [95% CI] |             Delta [95% CI] |  p(D>0) | p(D>band) |  McNemar
+  ----------------------------------------------------------------------------------------------------------------------------------
+    0.5 |   0.253 [+0.185,+0.325] |   0.211 [+0.150,+0.277] |  +0.041 [-0.010,+0.093] |   0.063 |     0.183 |    0.243
+    1.0 |   0.253 [+0.185,+0.325] |   0.170 [+0.112,+0.232] |  +0.082 [+0.021,+0.147] |   0.005 |     0.018 |    0.017
+    2.0 |   0.175 [+0.118,+0.238] |   0.227 [+0.163,+0.293] |  -0.052 [-0.117,+0.015] |   0.949 |     0.983 |    0.174
+
+  p(D>0): one-sided bootstrap prob that the true Delta <= 0 (small = robustly positive).
+  p(D>band): bootstrap prob that Delta <= +0.02, the vanilla null-band upper edge.
+  McNemar: exact two-sided p on paired (steered-correct/rand-wrong) vs (rand-correct/steered-wrong).
+
+### Post-Goodhart runA, SPECIFICITY CONTROL (probe = assertion direction)
+  file: causal_steering_runA_assertion_control.jsonl
+  100 prompts, 194 prefixes, baseline acc 0.278 [0.213, 0.347]  (cluster bootstrap on prompt_idx, B=10000)
+
+  alpha |         steer acc [95% CI] |          rand acc [95% CI] |             Delta [95% CI] |  p(D>0) | p(D>band) |  McNemar
+  ----------------------------------------------------------------------------------------------------------------------------------
+    0.5 |   0.284 [+0.212,+0.356] |   0.299 [+0.226,+0.374] |  -0.015 [-0.077,+0.047] |   0.710 |     0.851 |    0.766
+    1.0 |   0.242 [+0.174,+0.313] |   0.258 [+0.188,+0.328] |  -0.015 [-0.096,+0.066] |   0.672 |     0.793 |    0.784
+    2.0 |   0.294 [+0.228,+0.359] |   0.294 [+0.222,+0.369] |  +0.000 [-0.071,+0.070] |   0.529 |     0.693 |    1.000
+
+  p(D>0): one-sided bootstrap prob that the true Delta <= 0 (small = robustly positive).
+  p(D>band): bootstrap prob that Delta <= +0.02, the vanilla null-band upper edge.
+  McNemar: exact two-sided p on paired (steered-correct/rand-wrong) vs (rand-correct/steered-wrong).
+

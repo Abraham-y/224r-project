@@ -194,7 +194,15 @@ def main():
     probe_best = []
     majority_acc = []
     intersection_acc = []  # majority vote IFF its mean probe >= T
-    union_acc = []  # if either probe-best agrees with majority-best, commit
+    # Agreement-gated SELECTIVE selector. Note there is no non-degenerate
+    # always-commit combination of {probe-best, majority} gated on agreement:
+    # when the two agree they return the same equation, so "agree -> that, else
+    # -> probe-best" is identically probe-best, and "agree -> that, else ->
+    # majority" is identically majority. (The previous `union_acc` was the
+    # latter: both branches appended majority_label, so the reported "union"
+    # row was just a duplicate of the majority row.) The one informative
+    # version is selective: commit only when they agree, and report coverage.
+    agree_labels = []   # labels on the subset where probe-best == majority
     intersection_T = 0.5
     for p in prompts:
         v = by_p[p][:K]
@@ -210,7 +218,7 @@ def main():
             eq_to_label[eq] = lab
             eq_to_probes[eq].append(sc)
         if not eq_to_label:
-            majority_acc.append(0); intersection_acc.append(0); union_acc.append(0); continue
+            majority_acc.append(0); intersection_acc.append(0); continue
         counts = Counter()
         for r, sc, lab, eq in v:
             if eq is not None: counts[eq] += 1
@@ -224,21 +232,21 @@ def main():
         else:
             # Fallback to probe-best
             intersection_acc.append(best[2])
-        # Union: if probe-best's equation == majority equation, commit (high confidence both ways)
+        # Agreement-gated selective: only counted when probe-best and majority
+        # pick the same equation. Abstain otherwise (so this has coverage < 1).
         if first_eq[(p, best[0])] == top_eq:
-            union_acc.append(majority_label)  # both agree
-        else:
-            # Disagree — use majority
-            union_acc.append(majority_label)
+            agree_labels.append(majority_label)
 
     pa = float(np.mean(probe_best))
     ma = float(np.mean(majority_acc))
     ia = float(np.mean(intersection_acc))
-    ua = float(np.mean(union_acc))
+    agree_cov = len(agree_labels) / max(1, len(probe_best))
+    agree_acc = float(np.mean(agree_labels)) if agree_labels else float("nan")
     print(f"  probe-best-of-{K}                   : acc={pa:.4f}")
     print(f"  majority-of-{K}                     : acc={ma:.4f}")
     print(f"  intersection (majority if mean_probe>=0.5, else probe-best): acc={ia:.4f}")
-    print(f"  union (probe-best ≡ majority => commit, else majority): acc={ua:.4f}")
+    print(f"  agree-gated SELECTIVE (commit iff probe-best ≡ majority): "
+          f"acc={agree_acc:.4f} at coverage={agree_cov:.3f} (n={len(agree_labels)})")
 
     # Are probe-best vs majority-best the same? Agreement rate
     same = 0
@@ -281,8 +289,9 @@ def main():
 
     # Figure 2: bar chart of selector strategies
     fig, ax = plt.subplots(figsize=(8.5, 5), dpi=160)
-    methods = ["probe-best-of-16", "majority-of-16", "intersection\n(majority if probe>0.5)", "union\n(if agreeing)"]
-    values = [pa, ma, ia, ua]
+    methods = ["probe-best-of-16", "majority-of-16", "intersection\n(majority if probe>0.5)",
+               f"agree-gated\n(SELECTIVE, cov={agree_cov:.2f})"]
+    values = [pa, ma, ia, agree_acc]
     colors = ["#3a6dba", "#888888", "#3a8b2f", "#dba24c"]
     bars = ax.bar(methods, values, color=colors, alpha=0.85)
     for b, v in zip(bars, values):
@@ -314,7 +323,10 @@ def main():
     out_lines.append(f"  probe-best-of-{K}: acc={pa:.4f}")
     out_lines.append(f"  majority-of-{K}: acc={ma:.4f}")
     out_lines.append(f"  intersection (majority if probe>=0.5, else probe-best): acc={ia:.4f}")
-    out_lines.append(f"  union (committed iff probe-best ≡ majority): acc={ua:.4f}")
+    out_lines.append(f"  agree-gated SELECTIVE (commit iff probe-best == majority): "
+                     f"acc={agree_acc:.4f} at coverage={agree_cov:.3f} (n={len(agree_labels)})")
+    out_lines.append(f"    NOTE: this row is selective (coverage < 1); it is NOT comparable")
+    out_lines.append(f"    to the always-commit rows above at face value.")
     out_lines.append(f"  agreement rate: {100*same/n_prompts:.1f}%")
     os.makedirs(os.path.dirname(OUT_TXT) or ".", exist_ok=True)
     with open(OUT_TXT, "w") as f:

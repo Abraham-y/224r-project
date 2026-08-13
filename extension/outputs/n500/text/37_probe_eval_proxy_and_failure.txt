@@ -1,0 +1,15 @@
+=== (D) Probe-as-eval-proxy ===
+  True dataset acc: 0.5531
+  Probe-mean estimate (per-prompt mean): 0.5565 (diff +0.0035)
+  Probe-vote estimate (per-prompt mean >= 0.5): 0.5985 (diff +0.0455)
+  NULL CONTROL (identical pipeline, random-noise features):
+    noise-probe AUROC 0.5208 (chance); noise-probe estimate 0.5673 (diff +0.0143)
+    -> the probe-mean estimate is a logistic-regression calibration
+       identity, not evidence about probe quality.
+  TP (probe>=0.5, correct): n=3485, mean_blocks=9.68, mean_len=2030, mean_probe=0.960
+  TN (probe<0.5, wrong): n=2534, mean_blocks=3.08, mean_len=1893, mean_probe=0.028
+  FP (probe>=0.5, wrong) - overconfidence: n=197, mean_blocks=9.50, mean_len=1997, mean_probe=0.809
+  FN (probe<0.5, correct) - underconfidence: n=90, mean_blocks=6.83, mean_len=1954, mean_probe=0.206
+
+  Overconfidence rate (P(wrong | probe>=0.5)): 0.054
+  Underconfidence rate (P(correct | probe<0.5)): 0.034

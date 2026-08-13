@@ -1,0 +1,15 @@
+Cross-checkpoint probe transfer matrix with CORRECTED labels
+Position: L16; off-diagonals trained on full C_X, tested on C_Y
+
+=== pre_answer (L16) ===
+  Diagonal C_SFT (held-out):  0.912
+  Diagonal C_outcome (held-out): 0.982
+  Off-diag C_SFT->C_outcome:  0.953
+  Off-diag C_outcome->C_SFT:  0.822
+
+=== assertion (L16) ===
+  Diagonal C_SFT (held-out):  0.885
+  Diagonal C_outcome (held-out): 0.896
+  Off-diag C_SFT->C_outcome:  0.770
+  Off-diag C_outcome->C_SFT:  0.633
+

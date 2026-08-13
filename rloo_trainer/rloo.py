@@ -5,6 +5,7 @@ This script alternates between:
 2) updating policy weights with PyTorch (RLOOUpdateWorker).
 """
 
+import json
 import os
 import warnings
 import ray
@@ -167,6 +168,8 @@ class RLOOTrainer:
             warmup_ratio=self.warmup_ratio,
             num_training_steps=self.num_training_steps,
             probe_topk_M=getattr(self, "probe_topk_M", None),
+            probe_aug_lambda=getattr(self, "probe_aug_lambda", None),
+            probe_topk_renormalize=getattr(self, "probe_topk_renormalize", False),
         )
         ray.get(self.update_worker.load_checkpoint.remote())
         return self.update_worker
@@ -347,6 +350,27 @@ class RLOOTrainer:
                     load_checkpoint=False
                 ))
                 ray.get(self.update_worker.save_checkpoint.remote())
+
+                # Provenance sidecar. The directory name `epoch_{e}_step_{s}` uses
+                # the PRE-increment global_step, but the checkpoint is written
+                # AFTER that step's optimizer update -- so `..._step_30` holds the
+                # weights produced by 31 completed updates, not 30. Renaming the
+                # directories would break every downstream glob and every path in
+                # the writeups, so instead record the unambiguous count here.
+                try:
+                    with open(os.path.join(save_dir, "training_state.json"), "w") as _f:
+                        json.dump({
+                            "global_step_label": global_step,
+                            "updates_completed": global_step + 1,
+                            "epoch": epoch,
+                            "train_iter": train_iter,
+                            "note": ("dir name uses global_step_label (pre-increment); "
+                                     "updates_completed is the true number of optimizer "
+                                     "steps applied to these weights"),
+                        }, _f, indent=2)
+                except Exception as _e:
+                    print(f"[rloo] warning: could not write training_state.json: {_e}")
+
                 last_checkpoint_dir = save_dir
 
                 print("-" * 100)
@@ -434,6 +458,17 @@ if __name__ == "__main__":
                              "of each group of group_size rollouts contributes to the gradient. "
                              "Reward stays verifier; baseline is the standard LOO-over-rewards. "
                              "Effect: probe-best-of-K rejection sampling during training.")
+    parser.add_argument('--probe_topk_renormalize', action='store_true',
+                        help="With --probe_topk_M, rescale surviving advantages by group_size/M "
+                             "so the effective gradient magnitude matches vanilla RLOO. Without "
+                             "this, the top-M arm trains at ~M/G the effective learning rate, "
+                             "which confounds any top-M-vs-vanilla comparison. Default off for "
+                             "backward compatibility with already-run experiments.")
+    parser.add_argument('--probe_aug_lambda', type=float, default=None,
+                        help="Lambda for the probe-augmented LOO baseline: "
+                             "baseline = LOO over (lam*R + (1-lam)*probe). 0 = pure probe "
+                             "baseline, 1 = vanilla RLOO. Passed explicitly to the update "
+                             "worker; falls back to the PROBE_AUG_LAMBDA env var if unset.")
     parser.add_argument('--temperature', type=float, default=1.0)
     parser.add_argument('--top_p', type=float, default=1.0)
     parser.add_argument('--top_k', type=int, default=-1)
@@ -469,9 +504,11 @@ if __name__ == "__main__":
     _pb_rollouts = args.probe_value_rollouts
     _pb_train_max = args.probe_value_train_max
     _pb_topk_M = args.probe_topk_M
+    _pb_topk_renorm = args.probe_topk_renormalize
+    _pb_aug_lambda = args.probe_aug_lambda
     for _k in ("probe_baseline", "probe_value_model", "probe_value_pkl",
                "probe_value_layer", "probe_value_rollouts", "probe_value_train_max",
-               "probe_topk_M"):
+               "probe_topk_M", "probe_topk_renormalize", "probe_aug_lambda"):
         delattr(args, _k)
 
     trainer = RLOOTrainer(
@@ -507,12 +544,25 @@ if __name__ == "__main__":
         trainer.probe_valuer = _ProbeValuer()
         trainer.probe_baseline = True
         trainer.probe_topk_M = _pb_topk_M
+        trainer.probe_topk_renormalize = _pb_topk_renorm
+        # Resolve lambda here (CLI > env > default) so it is passed explicitly to
+        # the Ray actor rather than relying on env-var inheritance across processes.
+        if _pb_aug_lambda is None:
+            _env_lam = os.environ.get("PROBE_AUG_LAMBDA")
+            _pb_aug_lambda = float(_env_lam) if _env_lam is not None else 0.0
+            _lam_src = f"env PROBE_AUG_LAMBDA={_env_lam!r}" if _env_lam is not None else "default 0.0"
+        else:
+            _lam_src = "--probe_aug_lambda"
+        trainer.probe_aug_lambda = _pb_aug_lambda
         if _pb_topk_M is not None:
             print(f"[probe_topk] ACTIVE: only top-{_pb_topk_M} (by probe V@</think>) of each "
-                  f"group contributes to the gradient. Reward unchanged (verifier).", flush=True)
+                  f"group contributes to the gradient. Reward unchanged (verifier). "
+                  f"renormalize={_pb_topk_renorm}", flush=True)
         else:
-            print("[probe_baseline] ACTIVE: advantage = R_verifier - LOO-mean(probe V@</think>). "
-                  "Reward unchanged (verifier); reward_mean == true accuracy.", flush=True)
+            print(f"[probe_baseline] ACTIVE: advantage = R_verifier - LOO-mean("
+                  f"{_pb_aug_lambda}*R + {1 - _pb_aug_lambda}*probe V@</think>) "
+                  f"[lambda from {_lam_src}]. "
+                  f"Reward unchanged (verifier); reward_mean == true accuracy.", flush=True)
     else:
         trainer.probe_baseline = False
 

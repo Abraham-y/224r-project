@@ -63,14 +63,24 @@ def first_block_labels(eval_path):
 def load_and_score(cache_path, eval_path):
     """Load pre_answer and assertion caches, label by first-<answer>
     correctness, train probes via GroupKFold(5), return AUROCs + gap +
-    mean blocks/rollout."""
+    mean blocks/rollout.
+
+    mean_blocks is computed over the SAME rollouts the AUROC is computed on
+    (the ones present in the pre_answer cache), not over every rollout in the
+    eval file. The caches for C_SFT/C_outcome are clean-406-filtered while the
+    eval JSONs are the full n500, so averaging over the latter mixed two
+    different populations into one scatter point.
+    """
     labs, nblocks = first_block_labels(eval_path)
     aucs = {}
+    cached_keys: set = set()
     for kind in ["pre_answer", "assertion"]:
         cache_file = f"{cache_path}_l16_{kind}"
         with np.load(f"{cache_file}.npz") as d: X = d["X"]
         m = json.load(open(f"{cache_file}.meta.json"))
         groups = np.array([int(x['prompt_idx']) for x in m])
+        if kind == "pre_answer":
+            cached_keys = {(int(x['prompt_idx']), int(x['resp_idx'])) for x in m}
         y = np.array([labs.get((int(x['prompt_idx']), int(x['resp_idx'])), 0) for x in m], dtype=np.int32)
         sc = np.full(len(y), np.nan)
         for tr, te in GroupKFold(5).split(X, y, groups):
@@ -85,7 +95,8 @@ def load_and_score(cache_path, eval_path):
             aucs[kind] = float(roc_auc_score(y[idx], sc[idx]))
         else:
             aucs[kind] = float("nan")
-    mean_blocks = float(np.mean(list(nblocks.values())))
+    sel = [v for k, v in nblocks.items() if k in cached_keys] or list(nblocks.values())
+    mean_blocks = float(np.mean(sel))
     return aucs["pre_answer"], aucs["assertion"], aucs["pre_answer"] - aucs["assertion"], mean_blocks
 
 
@@ -109,14 +120,52 @@ def main():
         out_lines.append(f"  {label}: pre={pre:.3f}, ass={ass:.3f}, gap={gap:+.3f}, mean_blocks={mb:.2f}")
         results.append({"label": label, "pre": pre, "ass": ass, "gap": gap, "blocks": mb})
 
-    # Correlation
+    # Correlation across snapshots.
+    #
+    # HEALTH WARNING, printed with the number because it is easy to over-read:
+    #   * n is the number of SNAPSHOTS (5), not rollouts. A Pearson p-value on
+    #     n=5 has essentially no power and an unstable estimate; r=0.89 at n=5
+    #     is p<0.05 by a hair and would not survive one point moving.
+    #   * The snapshots are not drawn from one population: C_SFT and C_outcome
+    #     come from the n500 clean-406 caches, step_30/60/90 from separate
+    #     n200 evals over DIFFERENT prompts. So this mixes two problem sets.
+    #   * The points are also not independent -- they are successive checkpoints
+    #     of one training run, so this is 5 correlated observations of a
+    #     monotone-in-time trend, which is close to guaranteed to correlate with
+    #     any other monotone-in-time quantity.
+    # Treat it as descriptive; do not report the p-value as evidence.
     if len(results) >= 3:
         gaps = np.array([r["gap"] for r in results])
         blocks = np.array([r["blocks"] for r in results])
         r_p, p_p = pearsonr(blocks, gaps)
+        # Spearman is the more honest statistic for 5 monotone points -- but
+        # scipy's asymptotic p-value is meaningless at n=5 (it returns ~1e-24
+        # for rho=1.0, which is nonsense: with 5 points there are only 5! = 120
+        # orderings, so the smallest attainable two-sided p is 2/120 = 0.017).
+        # Use the exact permutation p-value instead.
+        from itertools import permutations
+        from scipy.stats import spearmanr
+        rho, _p_asymptotic = spearmanr(blocks, gaps)
+        if len(blocks) <= 8:
+            perms = list(permutations(range(len(blocks))))
+            null = [spearmanr(blocks, gaps[list(perm)])[0] for perm in perms]
+            p_rho = float(np.mean([abs(r) >= abs(rho) - 1e-12 for r in null]))
+            p_kind = f"exact permutation, {len(perms)} orderings"
+        else:
+            p_rho = float(_p_asymptotic)
+            p_kind = "asymptotic"
+        warn = ("DESCRIPTIVE ONLY: n = number of snapshots, not rollouts; the "
+                "snapshots come from two different eval sets (n500 clean-406 vs "
+                "n200) and are successive checkpoints of one run, so they are "
+                "neither independent nor identically sampled. Do not quote this "
+                "p-value as evidence.")
         out_lines.append("")
-        out_lines.append(f"Pearson r(mean_blocks, gap) across snapshots: r={r_p:+.3f} (p={p_p:.2e}, n={len(results)})")
-        print(f"\n  Pearson r(mean_blocks, gap) = {r_p:+.3f} (p={p_p:.2e})")
+        out_lines.append(f"Pearson  r(mean_blocks, gap) across snapshots: r={r_p:+.3f} (p={p_p:.2e}, n={len(results)})")
+        out_lines.append(f"Spearman rho(mean_blocks, gap):                rho={rho:+.3f} (p={p_rho:.3f} [{p_kind}], n={len(results)})")
+        out_lines.append(f"  !! {warn}")
+        print(f"\n  Pearson  r(mean_blocks, gap) = {r_p:+.3f} (p={p_p:.2e}, n={len(results)})")
+        print(f"  Spearman rho                 = {rho:+.3f} (p={p_rho:.3f} [{p_kind}])")
+        print(f"  !! {warn}")
 
     os.makedirs(os.path.dirname(OUT) or ".", exist_ok=True)
     with open(OUT, "w") as f:

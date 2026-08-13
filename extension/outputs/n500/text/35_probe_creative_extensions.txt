@@ -1,0 +1,20 @@
+=== (A) Probe-variance as problem difficulty ===
+  mean_probe ~ accuracy: Pearson r=+0.967 (p=4.08e-243)
+  std_probe  ~ accuracy: Pearson r=+0.062 (p=2.09e-01)
+
+=== (B) Cross-checkpoint applied probe transfer ===
+  C_SFT-trained probe AUROC deployed on C_outcome: 0.953
+  best-of-16 with C_SFT probe: 0.6527
+
+=== (C) Multi-position probe ensemble for selection ===
+  n_prompts: 357
+  pass@1: 0.7479
+  best-of-16 by pre_answer alone: 0.7647
+  best-of-16 by assertion alone: 0.7619
+  best-of-16 by neutral alone: 0.7535
+  best-of-16 by mean(pre, ass): 0.7619
+  best-of-16 by mean(pre, ass, neu): 0.7591
+  best-of-16 by product(pre, ass): 0.7619
+  best-of-16 by max(pre, ass): 0.7619
+  best-of-16 by min(pre, ass): 0.7647
+  best-of-16 by 0.7*pre + 0.3*ass: 0.7591

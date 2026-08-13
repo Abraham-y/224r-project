@@ -4,13 +4,25 @@ Produces:
   figures/poster_probe_auroc.pdf       (column 1: probe AUROC horizontal bars)
   figures/poster_causal_steering.pdf   (column 2: probe vs random line plot)
   figures/poster_goodhart_runA.pdf     (column 2: runA training trajectory)
-  figures/poster_post_goodhart_delta.pdf (column 3: Delta probe-vs-random bars)
 
-Run:  python scripts/make_poster_figures.py
+NOT produced here: figures/poster_post_goodhart_delta.pdf. That figure is owned
+by `extension/probe/plot_causal_steering.py`, which derives it (with bootstrap
+CIs) from the steering JSONLs. This script used to write the same path from
+hardcoded literals, so whichever ran last silently won.
+
+All numbers are read from `extension/outputs/poster_numbers.json`. Regenerate it
+first:
+
+    python scripts/collect_poster_numbers.py     # data -> poster_numbers.json
+    python scripts/make_poster_figures.py        # json -> figures/*.pdf
+    python extension/probe/plot_causal_steering.py   # the 4th figure
+
 Upload the resulting PDFs to Overleaf in a figures/ directory, then
 in poster.tex replace each \\begin{tikzpicture}...\\end{tikzpicture}
 block with \\includegraphics[width=0.95\\linewidth]{figures/poster_*.pdf}
 """
+import json
+import sys
 from pathlib import Path
 import matplotlib.pyplot as plt
 import matplotlib as mpl
@@ -43,13 +55,28 @@ GRID = {"linestyle": ":", "color": "#888", "alpha": 0.5, "linewidth": 0.8}
 OUT = Path("figures")
 OUT.mkdir(exist_ok=True)
 
+NUMBERS_PATH = Path("extension/outputs/poster_numbers.json")
 
-def fig_probe_auroc():
+# Which of the two held-out AUROC estimators in the codebase to plot. See
+# scripts/collect_poster_numbers.py for why there are two. Keep this consistent
+# with whichever one the paper text quotes.
+AUROC_ESTIMATOR = "auroc_balance_then_cv"
+
+
+def load_numbers():
+    if not NUMBERS_PATH.exists():
+        sys.exit(f"{NUMBERS_PATH} not found. Run:\n"
+                 f"    python scripts/collect_poster_numbers.py")
+    return json.loads(NUMBERS_PATH.read_text())
+
+
+def fig_probe_auroc(nums):
     # Thin/flat aspect: wider, shorter
     fig, ax = plt.subplots(figsize=(7.5, 2.6))
     positions = ["neutral", "assertion", "pre_answer"]
-    sft = [0.562, 0.887, 0.904]
-    out = [0.562, 0.852, 0.980]
+    tbl = nums["probe_auroc_l16"]
+    sft = [tbl["C_SFT"][p][AUROC_ESTIMATOR] for p in positions]
+    out = [tbl["C_outcome"][p][AUROC_ESTIMATOR] for p in positions]
     y = np.arange(len(positions))
     h = 0.32
     bars_sft = ax.barh(y - h/2, sft, height=h, color=STANFORD_RED_LIGHT,
@@ -74,20 +101,22 @@ def fig_probe_auroc():
     plt.close(fig)
 
 
-def fig_causal_steering():
+def fig_causal_steering(nums):
+    st = nums["causal_steering_vanilla"]
+    if not st:
+        print("  [skip] poster_causal_steering.pdf — no steering data in poster_numbers.json")
+        return
     fig, ax = plt.subplots(figsize=(7.0, 3.4))
-    alphas = [0, 0.5, 1, 2]
-    probe = [0.577, 0.567, 0.598, 0.515]
-    rand = [0.577, 0.639, 0.577, 0.546]
+    alphas, probe, rand, base = st["alphas"], st["probe"], st["rand"], st["baseline_acc"]
     ax.plot(alphas, probe, "o-", color=STANFORD_RED, linewidth=2.2,
             markersize=10, label="Probe direction")
     ax.plot(alphas, rand, "s-", color="#444", linewidth=2.2,
             markersize=9, label="Random direction")
-    ax.axhline(y=0.577, linestyle="--", color="#888", linewidth=1, alpha=0.7)
-    ax.text(2.05, 0.577, "baseline", fontsize=10, color="#666", va="center")
+    ax.axhline(y=base, linestyle="--", color="#888", linewidth=1, alpha=0.7)
+    ax.text(max(alphas) + 0.05, base, "baseline", fontsize=10, color="#666", va="center")
     ax.set_xlabel(r"Steering magnitude $\alpha$")
     ax.set_ylabel("Generation accuracy")
-    ax.set_xticks([0, 0.5, 1, 2])
+    ax.set_xticks(alphas)
     ax.set_yticks([0.4, 0.5, 0.6, 0.7])
     ax.set_ylim(0.40, 0.72)
     ax.set_xlim(-0.05, 2.25)
@@ -99,11 +128,10 @@ def fig_causal_steering():
     plt.close(fig)
 
 
-def fig_goodhart_runA():
+def fig_goodhart_runA(nums):
     fig, ax = plt.subplots(figsize=(7.0, 3.4))
-    steps = [0, 10, 20, 30, 40, 50, 60, 70, 90, 99]
-    probe = [0.452, 0.447, 0.561, 0.553, 0.687, 0.809, 0.947, 0.978, 0.988, 0.991]
-    verif = [0.572, 0.490, 0.582, 0.525, 0.528, 0.479, 0.385, 0.337, 0.310, 0.321]
+    g = nums["goodhart_runA"]
+    steps, probe, verif = g["steps"], g["probe"], g["verifier"]
     ax.plot(steps, probe, "o-", color=STANFORD_RED, linewidth=2.4,
             markersize=8, label="Probe (the reward)")
     ax.plot(steps, verif, "s-", color="#222", linewidth=2.4,
@@ -125,35 +153,18 @@ def fig_goodhart_runA():
     plt.close(fig)
 
 
-def fig_post_goodhart_delta():
-    # Thin/flat aspect: wider, shorter
-    fig, ax = plt.subplots(figsize=(7.5, 2.4))
-    labels = ["vanilla\n($C_{outcome}$)", "post-Goodhart\n(runA)"]
-    deltas = [0.021, 0.083]
-    # null band shading
-    ax.axvspan(-0.07, 0.02, color="#bbb", alpha=0.35, zorder=0, label="null band")
-    bars = ax.barh(labels, deltas, color=STANFORD_RED, edgecolor="#5a0f0f",
-                   linewidth=0.8, height=0.5, zorder=2)
-    for bar, v in zip(bars, deltas):
-        ax.text(v + 0.005, bar.get_y() + bar.get_height()/2,
-                f"$\\Delta = {v:+.3f}$", va="center", fontsize=11)
-    # null-band annotation positioned above the top bar
-    ax.text(-0.025, 1.62, "null band $[-0.07, +0.02]$",
-            ha="center", fontsize=10, color="#555")
-    ax.axvline(x=0, color="#444", linewidth=1, alpha=0.6)
-    ax.set_xticks([-0.10, -0.05, 0, 0.05, 0.10])
-    ax.set_xlim(-0.12, 0.14)
-    ax.set_xlabel(r"$\Delta$ probe-vs-random accuracy at $\alpha = 1.0$")
-    ax.xaxis.grid(True, **GRID)
-    ax.set_axisbelow(True)
-    plt.tight_layout()
-    plt.savefig(OUT / "poster_post_goodhart_delta.pdf")
-    plt.close(fig)
+# NOTE: fig_post_goodhart_delta() used to live here and wrote
+# figures/poster_post_goodhart_delta.pdf from the literals [0.021, 0.083].
+# extension/probe/plot_causal_steering.py writes the SAME path, but derived from
+# the steering JSONLs with bootstrap CIs. Two writers, one path, last-one-wins.
+# Removed here; plot_causal_steering.py is now the single owner of that figure.
 
 
 if __name__ == "__main__":
-    fig_probe_auroc()
-    fig_causal_steering()
-    fig_goodhart_runA()
-    fig_post_goodhart_delta()
-    print(f"Wrote 4 figures to {OUT.resolve()}/")
+    nums = load_numbers()
+    fig_probe_auroc(nums)
+    fig_causal_steering(nums)
+    fig_goodhart_runA(nums)
+    print(f"Wrote 3 figures to {OUT.resolve()}/")
+    print("For figures/poster_post_goodhart_delta.pdf run:")
+    print("    python extension/probe/plot_causal_steering.py")

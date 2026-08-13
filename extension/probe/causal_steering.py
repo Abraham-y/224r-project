@@ -13,9 +13,17 @@ For each prompt+rollout in a test set:
   3. Score the new completion's final <answer> against the Countdown verifier.
 
 Patch is applied as a forward hook on Qwen2's `model.layers[L].forward`
-output for the `</think>` token position. Because the K/V cache for that
-position is filled from the modified post-layer-L residual, every later
-token attending to </think> sees the modified representation.
+output for the `</think>` token position, during the prefill pass only.
+The modified residual then propagates through layers L+1..N for that
+position, so their K/V entries for `</think>` are built from the patched
+value and every later generated token attending to `</think>` sees it.
+(Layer L's own K/V for that position is computed from layer L's *input*
+and is therefore unchanged -- the intervention is strictly downstream of L,
+which is the right scope for a direction read off layer L's output.)
+
+The injection lands on the token containing the FIRST character of
+`</think>`, matching the position cache_hidden_states.py used to fit the
+probe direction. See --steer_position.
 
 Outputs JSONL with one row per (prompt, resp_idx, condition).
 """
@@ -57,10 +65,31 @@ def main():
     parser.add_argument("--n_prompts", type=int, default=100)
     parser.add_argument("--n_rollouts_per_prompt", type=int, default=2)
     parser.add_argument("--alphas", type=float, nargs="+", default=[0.0, 0.5, 1.0, 2.0])
-    parser.add_argument("--layer", type=int, default=16)
+    parser.add_argument("--layer", type=int, default=16,
+                        help="The hidden_states index the probe was fit on. See "
+                             "--layer_convention for which block that hooks.")
+    parser.add_argument(
+        "--layer_convention", choices=("hidden_state", "legacy_block"),
+        default="hidden_state",
+        help="How --layer maps to a decoder block. 'hidden_state' (default, "
+             "correct) treats --layer L as the hidden_states index the probe "
+             "reads and hooks model.layers[L-1], since hidden_states[0] is the "
+             "embedding output. 'legacy_block' hooks model.layers[L], which "
+             "writes to hidden_states[L+1] -- one block downstream of the read "
+             "site. That was the original behaviour and is kept only to "
+             "reproduce the shipped JSONLs.")
     parser.add_argument("--max_new_tokens", type=int, default=400)
     parser.add_argument("--output_jsonl", required=True)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument(
+        "--steer_position", choices=("probe_read", "last_token"), default="probe_read",
+        help="Which token of `</think>` to inject at. 'probe_read' (default, correct) "
+             "is the token containing the FIRST character of '</think>' -- the exact "
+             "position cache_hidden_states.py read to fit the probe direction. "
+             "'last_token' is the final token of the prefix (the trailing '>'), which "
+             "is 2-3 positions LATER; that was the original behaviour and is kept only "
+             "to reproduce the earlier runs. Steering somewhere the probe does not read "
+             "does not test whether the probe direction is causal.")
     args = parser.parse_args()
 
     import numpy as np
@@ -81,9 +110,15 @@ def main():
         args.model_path, dtype=torch.bfloat16, device_map="cuda"
     )
     model.eval()
-    # Random direction control (fixed per run for reproducibility)
+    # Random direction control (fixed per run for reproducibility). Dimension is
+    # taken from the steering vector rather than hardcoded to 896, so this also
+    # works at 1.5B (hidden_size=1536) instead of failing on a broadcast error.
     rng = np.random.RandomState(args.seed)
-    r = rng.randn(896).astype(np.float32)
+    d_model = int(v_unit.shape[0])
+    if d_model != model.config.hidden_size:
+        raise ValueError(f"steer_vec dim {d_model} != model hidden_size "
+                         f"{model.config.hidden_size}; wrong vector for this model?")
+    r = rng.randn(d_model).astype(np.float32)
     r /= np.linalg.norm(r)
     v_rand = torch.from_numpy(r).to("cuda", dtype=torch.bfloat16)
 
@@ -136,7 +171,31 @@ def main():
             return (new_hs,) + outputs[1:]
         return new_hs
 
-    target_layer = model.model.layers[args.layer]
+    # WHICH BLOCK TO HOOK. `output_hidden_states=True` returns hidden_states[0] =
+    # the embedding output, so hidden_states[L] is the output of layers[L-1].
+    # cache_hidden_states.py fits the probe on hidden_states[16]; hooking
+    # layers[16] therefore patches hidden_states[17] -- one full transformer
+    # block DOWNSTREAM of the site the probe reads. That off-by-one is live in
+    # every steering JSONL shipped before 2026-08-12, alongside the token-position
+    # bug --steer_position now fixes, and it is why the published section 3 result
+    # is reported as inconclusive rather than defended.
+    #
+    # `hidden_state` (default) patches the read site. `legacy_block` reproduces
+    # the shipped runs bit-for-bit; use it only to regenerate old artifacts.
+    if args.layer_convention == "hidden_state":
+        hook_block = args.layer - 1
+    else:
+        hook_block = args.layer
+    if not 0 <= hook_block < len(model.model.layers):
+        raise SystemExit(
+            f"[steer] layer {args.layer} under convention "
+            f"{args.layer_convention!r} resolves to block {hook_block}, which is "
+            f"outside 0..{len(model.model.layers) - 1}"
+        )
+    print(f"[steer] layer_convention={args.layer_convention}: probe reads "
+          f"hidden_states[{args.layer}]; hooking model.layers[{hook_block}]",
+          flush=True)
+    target_layer = model.model.layers[hook_block]
     handle = target_layer.register_forward_hook(hook)
 
     out_f = open(args.output_jsonl, "w")
@@ -161,8 +220,27 @@ def main():
                         max_length=2048, return_tensors="pt")
         input_ids = enc["input_ids"].to("cuda")
         offsets = [(int(s), int(e)) for s, e in enc["offset_mapping"][0].tolist()]
-        # Position of </think> token = the LAST token of the prefix
-        think_tok_pos = input_ids.shape[1] - 1
+
+        # Where to inject. The probe direction was fitted on the hidden state at
+        # the token CONTAINING THE FIRST CHARACTER of "</think>"
+        # (cache_hidden_states.py -> char_to_token_index). "</think>" is 2-3
+        # tokens wide for this tokenizer, so the last token of the prefix (the
+        # trailing '>') is NOT the position the probe reads. Injecting there
+        # tests a different position than the one the null result is about.
+        if args.steer_position == "last_token":
+            think_tok_pos = input_ids.shape[1] - 1
+        else:
+            close_char_in_prefix = len(prefix) - len("</think>")
+            think_tok_pos = char_to_token_after(offsets, close_char_in_prefix)
+            if think_tok_pos is None:
+                print(f"[steer] WARNING: could not locate </think> token for "
+                      f"({p_idx},{r_idx}); skipping", flush=True)
+                continue
+        if n_done == 0:
+            span = tokenizer.decode(input_ids[0, think_tok_pos:].tolist())
+            print(f"[steer] steer_position={args.steer_position}: injecting at token "
+                  f"{think_tok_pos}/{input_ids.shape[1]-1}; text from there = {span!r}",
+                  flush=True)
 
         for alpha in args.alphas:
             for direction_name in ("zero", "probe", "rand"):
@@ -197,6 +275,12 @@ def main():
                 out_f.write(json.dumps({
                     "prompt_idx": p_idx, "resp_idx": r_idx,
                     "alpha": float(alpha), "direction": direction_name,
+                    "steer_position": args.steer_position,
+                    "layer_convention": args.layer_convention,
+                    "probe_hidden_state_layer": int(args.layer),
+                    "hook_block": int(hook_block),
+                    "steer_tok_pos": int(think_tok_pos),
+                    "n_prefix_tokens": int(input_ids.shape[1]),
                     "patch_applied": bool(state["applied"]),
                     "new_score": float(new_score),
                     "original_score": original_score,

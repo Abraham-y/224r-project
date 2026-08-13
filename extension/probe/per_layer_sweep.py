@@ -3,7 +3,14 @@
 For each (ckpt, layer, kind), trains a balanced GroupKFold(5) probe and
 reports diagonal AUROC + gap pre_answer - assertion.
 
-Output: a table + a 4-panel figure (one panel per ckpt × pre/ass).
+LABELS: by default this uses CORRECTED first-<answer>-block correctness, the
+same label definition as every applied-probe and relabel script. The `y` array
+baked into the .npz at cache time is the verifier's ROLLOUT-FINAL score, which
+is a different quantity -- using it here (as this script previously did) put the
+per-layer figure on a different label definition from the headline AUROC table.
+Pass --labels cached to get the old behaviour.
+
+Output: a table + a 2-panel figure (one panel per ckpt).
 """
 
 from __future__ import annotations
@@ -11,6 +18,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import warnings
 
 import matplotlib.pyplot as plt
@@ -22,16 +30,48 @@ from sklearn.model_selection import GroupKFold
 
 warnings.filterwarnings("ignore")
 
+_ANSWER_RE = re.compile(r"<answer>(.*?)</answer>", re.DOTALL)
 
-def load_cell(cache_dir: str, ckpt: str, layer: int, kind: str):
+
+def _check_block(eq: str, target: int, nums: list) -> bool:
+    eq = eq.strip()
+    try:
+        n = [int(x) for x in re.findall(r"\d+", eq)]
+        if sorted(n) != sorted([int(x) for x in nums]):
+            return False
+        if not re.match(r"^[\d+\-*/().\s]+$", eq):
+            return False
+        return abs(eval(eq, {"__builtins__": None}, {}) - int(target)) < 1e-5
+    except Exception:
+        return False
+
+
+def first_block_labels(eval_path: str) -> dict:
+    """(prompt_idx, resp_idx) -> first-<answer>-block correctness."""
+    labs = {}
+    for p, row in enumerate(json.loads(l) for l in open(eval_path) if l.strip()):
+        t = int(row["target"]); nums = list(row["nums"])
+        for r_i, resp in enumerate(row["response"]):
+            m = _ANSWER_RE.search(resp)
+            labs[(p, r_i)] = int(bool(m) and _check_block(m.group(1), t, nums))
+    return labs
+
+
+def load_cell(cache_dir: str, ckpt: str, layer: int, kind: str, label_map=None):
     npz = os.path.join(cache_dir, f"{ckpt}_l{layer}_{kind}.npz")
     meta_path = npz.replace(".npz", ".meta.json")
     if not (os.path.exists(npz) and os.path.exists(meta_path)):
         return None
     with np.load(npz) as d:
-        X = d["X"]; y = d["y"]
+        X = d["X"]; y_cached = d["y"]
     meta = json.load(open(meta_path))
     groups = np.array([m["prompt_idx"] for m in meta])
+    if label_map is None:
+        y = y_cached
+    else:
+        y = np.array([label_map.get((int(m["prompt_idx"]), int(m["resp_idx"])),
+                                    int(y_cached[i]))
+                      for i, m in enumerate(meta)], dtype=np.int32)
     return X, y, groups
 
 
@@ -57,17 +97,29 @@ def main():
     parser.add_argument("--n_layers", type=int, default=25)
     parser.add_argument("--out_txt", default="extension/outputs/n500/text/22_per_layer_sweep.txt")
     parser.add_argument("--out_fig", default="extension/outputs/n500/figures/fig11_per_layer_sweep.png")
+    parser.add_argument("--labels", choices=("corrected", "cached"), default="corrected",
+                        help="'corrected' = first-<answer>-block correctness (matches the rest "
+                             "of the paper). 'cached' = the verifier rollout-final label baked "
+                             "into the .npz (the old, inconsistent behaviour).")
+    parser.add_argument("--eval_sft", default="eval_c_sft_n500.json")
+    parser.add_argument("--eval_outcome", default="eval_c_outcome_n500.json")
     args = parser.parse_args()
 
     layers = list(range(args.n_layers))
     ckpts = ("C_SFT", "C_outcome")
     kinds = ("pre_answer", "assertion", "neutral")
 
+    label_maps = {c: None for c in ckpts}
+    if args.labels == "corrected":
+        label_maps = {"C_SFT": first_block_labels(args.eval_sft),
+                      "C_outcome": first_block_labels(args.eval_outcome)}
+    print(f"[per-layer] labels = {args.labels}")
+
     results: dict = {(c, k): {} for c in ckpts for k in kinds}
     for layer in layers:
         for c in ckpts:
             for k in kinds:
-                cell = load_cell(args.cache_dir, c, layer, k)
+                cell = load_cell(args.cache_dir, c, layer, k, label_maps[c])
                 if cell is None:
                     print(f"missing {c} L{layer} {k}")
                     continue

@@ -15,14 +15,17 @@ Working on Qwen2.5-0.5B (replicated at 1.5B) trained on Countdown arithmetic wit
 | Claim | Evidence |
 |---|---|
 | A trace-final correctness probe is **near-oracle**, and outcome RL strengthens it. | Held-out AUROC `0.912 → 0.982` (0.5B); `0.974` at 1.5B; within-prompt matched-pair Wilcoxon `p < 1e-7`. |
-| Within multi-answer rollouts, the model's commit-time representation tracks the commit — **no "knows-but-doesn't-say"** at this scale. | On T→F drift rollouts, probe at the wrong-final commit = `0.154`, matches F→F floor `0.088`. |
-| The probe is a **reader, not a controller** on the vanilla checkpoint. | Activation-addition steering vs. matched random direction gives Δ ∈ `[-0.07, +0.02]` across α. |
-| As a **deployment selector** the probe is highly useful at zero extra inference compute. | Best-of-16 `+12.1 pp`; budgeted restart matches best-of-16 at `−60%` compute; abstention `98%` at `50%` coverage; probe-mean estimates dataset accuracy within `±0.4 pp`. |
-| As the **RL reward**, the probe catastrophically Goodharts in both initialisation regimes. | `runA` (init from C_outcome): delayed Goodhart, `−25 pp` first-block accuracy; `runB` (init from C_SFT): immediate Goodhart, `−22 pp`. |
-| **Mech-interp signature of Goodhart.** The same probe direction — causally inert before RL — becomes measurably causal after, while a near-orthogonal correctness-correlated direction stays null on the same checkpoint. | Probe direction Δ = `+0.083` at α=1.0; assertion direction (cosine `0.038`, AUROC `0.70`) Δ = `−0.015`. |
-| **Safe constructions** that bound or eliminate probe gradient access give either small lifts or no Goodhart. | Probe-as-baseline (LOO control variate): target-invariant. Multiplicative shaping `r = verifier × probe`: `+2.8 pp` first-block at `n=8,000`. Probe-best-of-K in-training selection: `+1.5 pp`, halves mean blocks per rollout. |
+| The probe is **not a length detector**, though length explains a lot. | Stratified within `</think>`-position deciles it holds `0.939`, against `0.564` for position alone. |
+| Within multi-answer rollouts, the model's commit-time representation tracks the commit — **no "knows-but-doesn't-say"** at this scale. | On T→F drift rollouts, probe at the wrong-final commit = `0.154` against an F→F floor of `0.088` — a real but small residue (`+0.065`, CI `[+0.023, +0.105]`), only `8.7%` of the way from floor to the T→T level. |
+| The probe is a **reader, not a usable write-axis** on the vanilla checkpoint. | Activation-addition steering vs. matched random direction gives Δ ∈ `[-0.07, +0.02]`; no magnitude gives a positive effect, and the one interval excluding zero (α=0.5, Δ = `−0.072`) points the wrong way. |
+| As a **deployment selector** the probe is useful at zero extra inference compute — but a structural baseline captures most of it. | Best-of-16 `+11.7 pp` over a random pick of 16 on C_outcome — `88.8%` of all available headroom — of which `+8.5 pp` is available from "pick the rollout with the shortest `<think>` body" with no probe at all; the probe adds `+3.2 pp` (CI `[+0.99, +5.42]`, p = 0.008). Budgeted restart matches best-of-16 at `−60%` compute; abstention `98%` at `50%` coverage. |
+| As the **RL reward**, the probe catastrophically Goodharts in both initialisation regimes. | `runA` (init from C_outcome): delayed Goodhart, `−31.4 pp` first-block accuracy (0.550 → 0.236); `runB` (init from C_SFT): immediate Goodhart, `−22 pp`. |
+| **A monitor with no internal access reproduces the failure**, and used as the reward it destroys the task. | 7-feature text-only logistic regression, frozen on baseline: score `0.506 → 0.832` while true accuracy falls `0.517 → 0.130`. As the RL reward (pre-registered Arm B): `0.0000` accuracy, with `99.9%` of rollouts still emitting a well-formed but arithmetic-free `<answer>` block. |
+| **Safe constructions** that bound or eliminate probe gradient access give either small lifts or no Goodhart — **and none beats read-only selection.** | Probe-as-baseline (LOO control variate): target-invariant, untested. Multiplicative shaping `r = verifier × probe`: `+2.84 pp` first-block, CI `[+1.85, +3.85]`, n=1 run. Probe-best-of-K in-training selection: `+1.5 pp`, halves mean blocks per rollout, n=1 run. Read-only best-of-16: `+11.7 pp`. |
 
-Full writeup: see the CS 224R report (private; not in the repo).
+**Withdrawn.** An earlier version of this README claimed a mech-interp signature of Goodhart — the optimised probe direction becoming causal post-RL (Δ = `+0.083`) while a near-orthogonal control stayed null. That result does not survive checking and is retracted: the steered vector has cosine `0.163` with the probe RL actually optimised (not `1.000`) and AUROC `0.896` (not `0.982`), the steering hook sat one transformer block and 2–3 tokens downstream of the probe's read site, the key contrasts reach only p = 0.063 and p = 0.080, and the three steering runs share zero prompts. `causal_steering.py` now fixes both the layer index and the token position, so it will not reproduce the published JSONLs; use `--layer_convention legacy_block --steer_position last_token` if you need to. See `REVISION_PACK.md` §A.
+
+Full writeup: `writeup_workshop.md` (and `writeup_workshop.tex`).
 
 ---
 
@@ -108,35 +111,94 @@ python extension/probe/probe_applied_scale_comparison.py  # 0.5B vs 1.5B
 
 ### 4. Causal steering
 
+Two flags on this script changed on 2026-08-12 and both change the numbers, so read
+this before comparing against any shipped JSONL.
+
+- `--steer_position` defaults to `probe_read`: the token containing the *first*
+  character of `</think>`, which is where `cache_hidden_states.py` fit the probe.
+  The original runs injected at the last token of the prefix, 2-3 positions later.
+- `--layer_convention` defaults to `hidden_state`: `--layer 16` means
+  `hidden_states[16]`, so the hook goes on `model.layers[15]`. The original runs
+  hooked `model.layers[16]`, which writes to `hidden_states[17]` — one full
+  transformer block downstream of the read site.
+
 ```bash
-# Vanilla null (Section 4 of the report)
+# The vanilla null (Section 4 of the paper), at the corrected site
 python extension/probe/causal_steering.py \
     --model_path <C_outcome>  --steer_vec <C_outcome_l16_pre_answer.npz> \
     --alphas 0.0 0.5 1.0 2.0  --n_prompts 100 --n_rollouts_per_prompt 2
 
-# Post-Goodhart + specificity control (Section 6.4)
+# To reproduce the shipped (withdrawn) post-Goodhart JSONLs bit-for-bit
 python extension/probe/causal_steering.py \
-    --model_path <runA_final>  --steer_vec <C_outcome_l16_pre_answer.npz>     # +0.083
-python extension/probe/causal_steering.py \
-    --model_path <runA_final>  --steer_vec <C_outcome_l16_assertion_direction.npz>  # -0.015 (control)
+    --model_path <runA_final>  --steer_vec <C_outcome_l16_pre_answer.npz> \
+    --steer_position last_token --layer_convention legacy_block
 ```
+
+Analyse with `extension/probe/causal_steering_stats.py`, which does the
+prompt-clustered bootstrap and exact McNemar. Note that the vanilla and
+post-Goodhart JSONLs share **zero prompts** (50/97 prefixes vs 100/194), so any
+before/after contrast across those files is unpaired.
 
 ### 5. Probe-as-RL-reward (Goodhart demonstration)
 
+The initialisation is `--model_name` (passed straight through to `rloo.py`); the
+reward shaping is `--reward_mode`.
+
 ```bash
 # runA: init from C_outcome (delayed Goodhart)
-python extension/training/probe_reward_rloo.py --init C_outcome --mode reward
+python extension/training/probe_reward_rloo.py \
+    --model_name <C_outcome_path> --reward_mode probe \
+    --probe extension/cache/steering/probe_pipeline_C_outcome_l16_pre_answer_temp1.pkl \
+    --num_training_steps 100 --save_every_n_steps 10
+
 # runB: init from C_SFT (immediate Goodhart)
-python extension/training/probe_reward_rloo.py --init C_SFT --mode reward
-# Multiplicative shaping (verifier × probe)
-python extension/training/probe_reward_rloo.py --init C_SFT --mode mult
+python extension/training/probe_reward_rloo.py \
+    --model_name asingh15/qwen-sft-countdown-defaultproj --reward_mode probe \
+    --probe extension/cache/steering/probe_pipeline_C_outcome_l16_pre_answer_temp1.pkl
+
+# Multiplicative shaping (verifier x probe)
+python extension/training/probe_reward_rloo.py \
+    --model_name asingh15/qwen-sft-countdown-defaultproj --reward_mode mult
 ```
+
+`--reward_mode` is one of `probe | probe_gated | blend | mult`. `--reward_disable`
+reverts to the vanilla verifier reward as an A/B control.
 
 ### 6. Probe-best-of-K in-training selection (the hybrid that beats vanilla RLOO)
 
+Top-M gating lives on `rloo.py` and requires `--probe_baseline`:
+
 ```bash
-python extension/training/probe_augmented_rloo.py --K 8 --top_M 4 --init C_SFT
+python rloo_trainer/rloo.py \
+    --model_name asingh15/qwen-sft-countdown-defaultproj \
+    --group_size 8 --probe_baseline --probe_topk_M 4 \
+    --probe_value_pkl extension/cache/steering/probe_pipeline_C_outcome_l16_pre_answer_temp1.pkl
 ```
+
+Add `--probe_topk_renormalize` to rescale the surviving advantages by
+`group_size / M`. Without it the top-M arm trains at roughly `M/group_size` of
+vanilla RLOO's effective learning rate, so a top-M-vs-vanilla comparison at
+matched `--learning_rate` is partly a comparison of step sizes. The flag
+defaults off so the original runs reproduce.
+
+The lambda-mix control-variate wrapper is separate:
+
+```bash
+python extension/training/probe_augmented_rloo.py --lambda_mix 0.5 \
+    --model_name asingh15/qwen-sft-countdown-defaultproj
+```
+
+### 6b. Structural controls (run these before quoting any probe number)
+
+```bash
+python extension/probe/structural_baselines.py
+```
+
+Reports, on the same folds and population as the probe: the AUROC of the
+`</think>` token position alone, the probe's AUROC stratified within
+position deciles, best-of-K for "pick the shortest `<think>` body" next to
+probe-best-of-K, and the size/accuracy of the no-`</think>` rollouts that are
+absent from every cached AUROC. See `CODE_AUDIT.md` §C1.
 
 ### 7. Probe-as-baseline (target-invariant LOO control variate)
 

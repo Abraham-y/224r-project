@@ -28,10 +28,22 @@ logs/
 
 # Analysis artifacts (large or trivially reproducible)
 extension/cache/
-extension/outputs/
 *.npz
 *.pkl
 *.csv
+
+# extension/outputs/ is NOT excluded wholesale. The small .txt/.json result
+# artifacts are the released evidence for the paper's numbers -- its
+# reproducibility statement claims they regenerate from this repo, and that is
+# only checkable if the files the analysis scripts write are here (~250 KB
+# total). A blanket `extension/outputs/` rule stops git descending into the
+# directory at all, so negations inside it never fire; exclude by kind instead.
+extension/outputs/**/*.png
+extension/outputs/**/*.pdf
+extension/outputs/**/*.jsonl
+extension/outputs/_smoke/
+extension/outputs/n500/probe_behavioral/
+extension/outputs/n500/probe_behavioral_1.5b/
 
 # macOS
 .DS_Store
@@ -57,6 +69,7 @@ figures/
 
 # Private research notes / writeups / runbooks (not for the public repo)
 writeup.md
+writeup_workshop.md
 findings.md
 RUNBOOK_CLEAN_REPLICATION.md
 MEMORY.md
@@ -72,3 +85,9 @@ causal_steering_*.jsonl
 # Modal submission bundles
 rloo_trainer/submit/
 rloo_trainer/submit.zip
+
+# Submission bundles (rebuildable; large)
+arxiv_submission.zip
+arxiv_neurips_submission.zip
+extension_code_submission.zip
+sft_aug_sanity.json

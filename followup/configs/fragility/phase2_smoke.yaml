@@ -1,0 +1,45 @@
+# Phase 2 SMOKE TEST — verify the steering pipeline runs and measure throughput.
+#
+# Not a scientific run and not the pre-registered configuration. Its only jobs:
+#   1. prove run_steering.py executes end to end (it has never been run);
+#   2. prove the forward hook actually fires (the script raises if it does not —
+#      a silent no-op would produce a perfect null that looks like a result);
+#   3. measure seconds-per-generation so the full run can be costed from data
+#      instead of a guess.
+#
+# Deliberately tiny: 1 checkpoint, 5 prefixes, 1 alpha magnitude, 1 random
+# control, 1 hook convention. ~25 generations.
+
+name: phase2_smoke
+phase: phase2
+seed: 42
+
+probe:
+  id: pre_answer_l16_temp1
+  direction: extension/cache/steering/C_outcome_temp1_l16_direction.npz
+  pipeline: extension/cache/steering/probe_pipeline_C_outcome_l16_pre_answer_temp1.pkl
+  layer: 16
+
+steering:
+  scale_ref: h_mean_norm
+  alphas: [1.0]
+  both_signs: true
+  ref_alpha: 1.0
+  directions: [probe, rand]
+  n_random_seeds: 1
+  layer: 16
+  n_prompts: 5
+  n_rollouts_per_prompt: 1
+  max_new_tokens: 400
+  gen_temperature: 0.6
+  gen_top_p: 0.95
+  gen_top_k: 20
+
+patching:
+  enabled: false
+
+ladders:
+  - name: runA
+    config: phase0_harvest_runA.yaml
+
+checkpoint_steps: [99]

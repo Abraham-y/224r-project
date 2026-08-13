@@ -1,0 +1,77 @@
+# Phase 3 — can collapse severity be predicted from probe geometry at t=0?
+#
+# The zoo is built ONCE from cached t=0 activations (no GPU). Each probe then
+# gets the same RL-against-probe recipe. Pilots are 1 seed; anything that goes in
+# the paper gets 3.
+#
+# Cost discipline: 13 probes x 1 pilot run x ~$30 = ~$390 if every probe gets its
+# own RL run. That is the expensive part of this project and it should NOT be
+# launched until the transfer matrix (which is free, see transfer_matrix.py) has
+# been inspected — the transfer matrix already ranks probes by post-hoc
+# robustness on activations we will have harvested in Phase 0, and if it shows no
+# spread across probes, H3 is dead before any RL run is paid for.
+
+name: phase3_probe_zoo
+phase: phase3
+seed: 0
+
+source_activations:
+  # t=0 activations to fit the zoo on. C_outcome is runA's init; C_SFT is runB's.
+  run_id_or_cache: extension/cache/probe_cache_n500_all_layers_clean406
+  checkpoint_tag: C_outcome
+  eval_json: eval_c_outcome_n500.json
+
+label_rule: last_block
+
+split:
+  by: prompt_idx
+  val_frac: 0.3
+  seed: 0
+
+# 13 probes varying layer, regularisation, rank, and objective.
+zoo:
+  - {probe_id: L16_C0.1,        kind: linear, layer: 16, C: 0.1}
+  - {probe_id: L16_C0.001,      kind: linear, layer: 16, C: 0.001}
+  - {probe_id: L16_C10,         kind: linear, layer: 16, C: 10.0}
+  - {probe_id: L12_C0.1,        kind: linear, layer: 12, C: 0.1}
+  - {probe_id: L20_C0.1,        kind: linear, layer: 20, C: 0.1}
+  - {probe_id: L16_pca8,        kind: pca_linear, layer: 16, C: 0.1, rank: 8}
+  - {probe_id: L16_pca32,       kind: pca_linear, layer: 16, C: 0.1, rank: 32}
+  - {probe_id: L16_pca128,      kind: pca_linear, layer: 16, C: 0.1, rank: 128}
+  - {probe_id: L16_meandiff,    kind: mean_diff, layer: 16}
+  - {probe_id: L16_mlp256,      kind: mlp, layer: 16, hidden: 256}
+  - {probe_id: ens_L12_16_20,   kind: ensemble, layers: [12, 16, 20], C: 0.1}
+  - {probe_id: L16_adv_template, kind: adversarial_template, layer: 16, C: 0.1}
+  - {probe_id: L16_resid_template, kind: template_residualised, layer: 16, C: 0.1}
+
+# Pre-hoc features correlated against collapse severity. Computed from t=0
+# activations only — nothing here may look at any post-RL checkpoint.
+prehoc_features:
+  - auroc_val_t0
+  - sep_t0
+  - margin_p10                 # 10th percentile of |decision function| on val
+  - margin_median
+  - participation_ratio
+  - projection_variance_fraction
+  - auroc_cond_template_t0     # how much of the probe survives the confound control
+  - causal_strength_t0         # requires the Phase 2 steering job at t=0
+
+severity:
+  - delta_true_accuracy        # first-block accuracy, t=0 minus final
+  - steps_to_collapse          # first step where probe - verifier gap > 0.25
+  - final_probe_score
+
+rl_recipe:
+  # Identical to runB (init from C_SFT), so probes differ and nothing else does.
+  init: C_SFT
+  num_training_steps: 100
+  batch_size: 128
+  group_size: 8
+  gradient_accumulation_steps: 128
+  learning_rate: 1.0e-5
+  warmup_ratio: 0
+  lr_schedule: constant
+  save_every_n_steps: 3        # ~34 checkpoints, the CLAUDE.md density target
+  kl_divergence_coefficient: 1.0e-3
+  seeds_pilot: [0]
+  seeds_paper: [0, 1, 2]

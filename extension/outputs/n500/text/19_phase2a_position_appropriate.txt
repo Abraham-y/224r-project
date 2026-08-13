@@ -1,0 +1,62 @@
+Task A: POSITION-APPROPRIATE PROBE for Phase 2A trajectory analysis
+  ckpt=C_outcome, layer=L16
+  answers cache: extension/cache/probe_cache_n500_answers
+
+Sanity check: held-out diagonal AUROC on `<answer>` positions = 0.920
+             (probe trained on `<answer>` positions, with block_correct labels)
+
+Transition table -- probe(last) means with POSITION-APPROPRIATE probe:
+
+transition     n    probe(first)    probe(last)   last_acc  first_acc
+------------------------------------------------------------------------------
+TT      2983           0.874          0.823        1.00        1.00
+TF       490           0.856          0.154        0.00        1.00
+FT       150           0.156          0.580        1.00        0.00
+FF      1835           0.084          0.088        0.00        0.00
+
+==============================================================================
+Per-block-index trajectory on T->F rollouts (with position-appropriate probe)
+==============================================================================
+
+ block      n   %corr   mean_probe
+     0    490    1.00        0.856
+     1    490    0.75        0.644
+     2    424    0.52        0.521
+     3    328    0.48        0.481
+     4    261    0.38        0.384
+     5    203    0.33        0.360
+     6    155    0.27        0.328
+     7    130    0.22        0.284
+     8    107    0.13        0.242
+     9     88    0.12        0.281
+    10     78    0.05        0.249
+    11     66    0.08        0.231
+    12     54    0.02        0.218
+
+==============================================================================
+Per-block-index, ALL rollouts: probe at block_idx separated by block correctness
+==============================================================================
+ block_idx   n_corr   n_wrng    p_corr    p_wrng      diff
+         0     3473     1985     0.871     0.089    +0.782
+         1     3409     2049     0.838     0.101    +0.737
+         2     2981     1231     0.823     0.161    +0.661
+         3     2558      832     0.826     0.210    +0.616
+         4     2129      632     0.834     0.234    +0.600
+         5     1846      487     0.825     0.279    +0.547
+         6     1587      373     0.820     0.303    +0.517
+         7     1367      316     0.839     0.305    +0.534
+         8     1131      266     0.841     0.311    +0.530
+         9      929      229     0.842     0.303    +0.540
+        10      773      198     0.842     0.319    +0.523
+        11      667      169     0.845     0.298    +0.547
+        12      580      145     0.865     0.315    +0.550
+
+==============================================================================
+Pattern A vs B verdict (with position-appropriate probe)
+==============================================================================
+probe(last) on T->F: 0.154
+probe(last) on T->T: 0.823  (reference: TRUE-correct ceiling)
+probe(last) on F->F: 0.088  (reference: TRUE-wrong floor)
+
+=> probe(last) on T->F is closer to F->F than to T->T.
+   PATTERN A confirmed with position-appropriate probe.

@@ -38,7 +38,6 @@ warnings.filterwarnings("ignore")
 CACHE = "extension/cache/probe_cache_n500_clean406/C_outcome_l16_pre_answer.npz"
 META = CACHE.replace(".npz", ".meta.json")
 EVAL = "eval_c_outcome_n500.json"
-PAC = "extension/outputs/n500/per_answer_correctness.jsonl"
 OUT_TXT = "extension/outputs/n500/text/32_probe_guided_restart.txt"
 OUT_FIG = "extension/outputs/n500/figures/fig18_probe_guided_restart.png"
 
@@ -180,20 +179,63 @@ def main():
             print(f"  {B:>3}  {T:>4.2f}  {a:>7.4f}  {u:>7.2f}")
             results.append({"B": B, "T": float(T), "acc": float(a), "n_used": float(u)})
 
-    # Summary: best result
+    # Summary: best result.
+    # NOTE: this maximises over the (B, T) grid on the very prompts it reports,
+    # so it is a fitted parameter presented as a test score. The held-out version
+    # below picks (B, T) on prompts the reported ones are not in.
     best = max(results, key=lambda r: r["acc"])
-    print(f"\nBest: B={best['B']}, T={best['T']:.2f}  -> acc={best['acc']:.4f}, n_used={best['n_used']:.2f}")
+    print(f"\nBest (IN-SAMPLE): B={best['B']}, T={best['T']:.2f}  "
+          f"-> acc={best['acc']:.4f}, n_used={best['n_used']:.2f}")
 
-    # Comparison vs majority
-    # Note: with rambling, the "majority" of K rollouts may be hard to compute (each rollout has multiple <answer>);
-    # we use the FIRST-<answer> correctness of each rollout for fair comparison
+    # ---- Held-out (B, T) selection -----------------------------------------
+    fold_of = {p: i % 2 for i, p in enumerate(prompts)}
+    grid = [(B, T) for B in (2, 4, 8, 16) for T in (0.30, 0.50, 0.70, 0.85, 0.95)]
+
+    def restart_on(subset, B, T):
+        acc = 0; nu = 0; used = 0
+        for p in subset:
+            v = by_prompt[p][:B]
+            if not v:
+                continue
+            picked = None; best_so_far = None; n_used = 0
+            for _r, sc, lbl in v:
+                n_used += 1
+                if best_so_far is None or sc > best_so_far[1]:
+                    best_so_far = (lbl, sc)
+                if sc >= T:
+                    picked = lbl
+                    break
+            acc += best_so_far[0] if picked is None else picked
+            nu += 1; used += n_used
+        return (acc / nu, used / nu) if nu else (float("nan"), float("nan"))
+
+    pooled_acc = pooled_used = pooled_n = 0
+    picks = {}
+    for held in (0, 1):
+        sel = [p for p in prompts if fold_of[p] != held]
+        ev = [p for p in prompts if fold_of[p] == held]
+        if not sel or not ev:
+            continue
+        B_star, T_star = max(grid, key=lambda bt: restart_on(sel, *bt)[0])
+        picks[held] = {"B": B_star, "T": T_star}
+        a, u = restart_on(ev, B_star, T_star)
+        pooled_acc += a * len(ev); pooled_used += u * len(ev); pooled_n += len(ev)
+    ho_acc = pooled_acc / pooled_n if pooled_n else float("nan")
+    ho_used = pooled_used / pooled_n if pooled_n else float("nan")
+    print(f"Best (HELD-OUT, 2-fold by prompt): picks={picks}")
+    print(f"  acc={ho_acc:.4f}, n_used={ho_used:.2f}  (n_prompts={pooled_n})  "
+          f"<-- report THIS, not the in-sample max")
+
+    # ORACLE majority reference: "are >50% of the K rollouts first-block correct?".
+    # This consumes the answer key, so it is NOT a deployable selector and NOT
+    # self-consistency (which votes on the answer string). Reference line only.
     by_prompt_majority = {}
     for p in prompts:
         v = by_prompt[p]
         labs = [t[2] for t in v]
         by_prompt_majority[p] = int(sum(labs) > len(labs) / 2)
-    maj_acc = float(np.mean(list(by_prompt_majority.values())))
-    print(f"\nMajority-vote-of-K (first-block labels): acc = {maj_acc:.4f}")
+    oracle_maj_acc = float(np.mean(list(by_prompt_majority.values())))
+    print(f"\nORACLE majority-of-K (needs answer key; not a deployable baseline): acc = {oracle_maj_acc:.4f}")
 
     # Save
     out_lines = [
@@ -203,7 +245,7 @@ def main():
         "",
         f"BASELINES:",
         f"  pass@1: {p1_acc:.4f}",
-        f"  majority-vote-of-K: {maj_acc:.4f}",
+        f"  ORACLE majority-of-K (needs answer key): {oracle_maj_acc:.4f}",
     ]
     for K in Ks:
         a, u = run_strategy_best_of_K(K)
@@ -212,7 +254,11 @@ def main():
     for r in results:
         out_lines.append(f"  B={r['B']:>2}, T={r['T']:.2f}: acc={r['acc']:.4f}, n_used={r['n_used']:.2f}")
     out_lines.append("")
-    out_lines.append(f"BEST: B={best['B']}, T={best['T']:.2f}: acc={best['acc']:.4f}, n_used={best['n_used']:.2f}")
+    out_lines.append(f"BEST (IN-SAMPLE, (B,T) maximised on these same prompts -- optimistic):")
+    out_lines.append(f"  B={best['B']}, T={best['T']:.2f}: acc={best['acc']:.4f}, n_used={best['n_used']:.2f}")
+    out_lines.append(f"BEST (HELD-OUT, 2-fold by prompt) -- report this:")
+    out_lines.append(f"  picks per fold: {picks}")
+    out_lines.append(f"  acc={ho_acc:.4f}, n_used={ho_used:.2f} (n_prompts={pooled_n})")
     os.makedirs(os.path.dirname(OUT_TXT) or ".", exist_ok=True)
     with open(OUT_TXT, "w") as f:
         f.write("\n".join(out_lines) + "\n")
@@ -235,7 +281,7 @@ def main():
         ys = [r["acc"] for r in rows_T]
         ax.plot(xs, ys, marker="o", lw=1.5, alpha=0.7, color=color_map[T], label=f"restart T={T}")
     ax.scatter([p1_used], [p1_acc], color="red", marker="*", s=120, zorder=5, label=f"pass@1 = {p1_acc:.3f}")
-    ax.scatter([16], [maj_acc], color="grey", marker="^", s=90, zorder=5, label=f"majority of 16 = {maj_acc:.3f}")
+    ax.scatter([16], [oracle_maj_acc], color="grey", marker="^", s=90, zorder=5, label=f"ORACLE majority of 16 = {oracle_maj_acc:.3f}")
     ax.set_xlabel("average rollouts used per prompt (compute proxy)")
     ax.set_ylabel("accuracy (first-<answer> correctness)")
     ax.set_title("Probe-guided budgeted restart: accuracy vs compute (0.5B C_outcome clean-406)")

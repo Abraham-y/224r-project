@@ -1,0 +1,86 @@
+# Phase 2 — causal status of the probe direction over training.
+#
+# READ followup/experiments/fragility/phase2_causal_status/phase2_predictions.md
+# BEFORE RUNNING. The predictions are pre-registered; this config is frozen to
+# match them.
+
+name: phase2_default
+phase: phase2
+seed: 42
+
+probe:
+  id: pre_answer_l16_temp1
+  direction: extension/cache/steering/C_outcome_temp1_l16_direction.npz
+  pipeline: extension/cache/steering/probe_pipeline_C_outcome_l16_pre_answer_temp1.pkl
+  layer: 16
+
+steering:
+  # alpha scale convention. followup/CLAUDE.md asks for alpha x "activation std".
+  # The published steering results (the [-0.07, +0.02] null band and the
+  # post-Goodhart +0.083) use alpha x h_mean_norm = alpha x 21.86 at L16. The
+  # mean PER-DIMENSION std at L16 is ~0.09, so alpha=8 x act_std would inject
+  # ~3% of the paper's alpha=1.0 magnitude and would return a null by
+  # construction. h_mean_norm is therefore the primary reference, so Phase 2 is
+  # directly comparable to the paper; proj_std is swept as a secondary,
+  # more interpretable convention ("alpha sds of this feature").
+  #
+  # Every condition records its injected L2 norm, so the two conventions can be
+  # cross-walked after the fact.
+  scale_ref: h_mean_norm
+  alphas: [0.5, 1.0, 2.0]
+  both_signs: true                # negative alpha as well as positive
+  # The dose at which the headline `causal_strength` is reported. alpha = 1.0 is
+  # the paper-comparable point: the published post-Goodhart +0.083 and the
+  # assertion control's -0.015 are both quoted there. Frozen here so it is not a
+  # post-hoc pick; run_steering.py refuses to run if it is not in `alphas`.
+  # The other alphas remain the pre-registered dose-response, reported per alpha
+  # as `steer_delta_acc_alpha*` — they are just not the summary.
+  ref_alpha: 1.0
+  secondary_scale_ref: proj_std
+  secondary_alphas: [2.0, 4.0, 8.0]
+  # `rand`      = matched-norm random control (is ANY perturbation this size
+  #               disruptive?)
+  # `assertion` = a correctness-CORRELATED but never-optimised direction
+  #               (L16 assertion probe, AUROC 0.70, cosine -0.020 with the probe).
+  #               This is the paper's strongest control and the one that kills
+  #               "any correctness-correlated direction would become causal under
+  #               optimisation": post-Goodhart it gave -0.015 where the probe
+  #               direction gave +0.083. Random noise cannot make that argument
+  #               because it carries no correctness information at all.
+  directions: [probe, assertion, rand]
+  assertion_direction: extension/cache/steering/C_outcome_l16_assertion_direction.npz
+  n_random_seeds: 3               # 3 random controls, averaged
+  layer: 16
+  # NOTE: steering runs only at `probe.layer + hook_offset`. Bracketing layers
+  # are covered by the PATCHING arm (`patching.layers`), which is what answers
+  # the relocation question. A `bracketing_layers` key used to sit here, read by
+  # nothing — a config key that silently does nothing is indistinguishable from
+  # an experiment that silently did not run.
+  n_prompts: 100
+  n_rollouts_per_prompt: 2
+  max_new_tokens: 400
+  gen_temperature: 0.6            # matches the paper's steering protocol
+  gen_top_p: 0.95
+  gen_top_k: 20
+
+patching:
+  # Swap the probe-layer, answer-position activation between a correct-run and an
+  # incorrect-run on the SAME prompt, then regenerate from `</think>`.
+  enabled: true
+  n_pairs: 150
+  layers: [12, 14, 16, 18, 20]
+  # Both transplant directions (correct->wrong and wrong->correct) always run,
+  # each against its own unpatched control regeneration on the same prefix under
+  # a matched sampling seed. Without that control the "flip rate" is dominated by
+  # resampling churn, which itself tracks the collapsing accuracy.
+  max_new_tokens: 400
+
+ladders:
+  - name: runA
+    config: phase0_harvest_runA.yaml
+  - name: runB
+    config: phase0_harvest_runB.yaml
+
+# Which checkpoints get the (expensive) causal treatment. Chosen once, from the
+# published trajectory: before the cliff, at the cliff, and after.
+checkpoint_steps: [0, 20, 40, 60, 90]

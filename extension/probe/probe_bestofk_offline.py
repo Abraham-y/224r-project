@@ -64,17 +64,22 @@ def main() -> None:
 
     tok, model = _load_frozen_model(args.model)
 
+    d_model = int(model.config.hidden_size)  # was hardcoded 896 (0.5B only)
+
     # Per-rollout records (flat), grouped by problem.
     X, y, grp = [], [], []
     has_h = []                 # whether a hidden state was extractable
+    think_chars = []           # STRUCTURAL feature: chars before the first </think>
     per_problem: dict[int, list[int]] = {}
     gi = 0
     for pidx, row in enumerate(rows):
         gt = {"target": int(row["target"]), "numbers": list(row["nums"])}
         for resp in row["response"][: args.max_responses]:
             h = _think_close_hidden(tok, model, row["prompt"], resp, args.layer)
-            X.append(h if h is not None else np.zeros(896, dtype=np.float32))
+            X.append(h if h is not None else np.zeros(d_model, dtype=np.float32))
             has_h.append(h is not None)
+            close = resp.find("</think>")
+            think_chars.append(close if close >= 0 else len(resp))
             y.append(_first_block_correct(resp, gt, cd))
             grp.append(pidx)
             per_problem.setdefault(pidx, []).append(gi)
@@ -84,6 +89,7 @@ def main() -> None:
 
     X = np.asarray(X, np.float32); y = np.asarray(y, int)
     grp = np.asarray(grp); has_h = np.asarray(has_h)
+    think_chars = np.asarray(think_chars, float)
     print(f"[bestofk] {len(y)} rollouts, {(~has_h).sum()} without </think>; "
           f"overall first-block acc={y.mean():.3f}", flush=True)
 
@@ -104,8 +110,22 @@ def main() -> None:
     print(f"[bestofk] held-out probe AUROC (first-block, </think> L{args.layer}) = {auroc:.3f}", flush=True)
 
     # Per-problem selection metrics.
+    #
+    # FAIRNESS OF THE BASELINE. Rollouts with no locatable `</think>` get
+    # probe_score = -1, so the probe never selects one -- and on this task such a
+    # rollout is essentially always wrong. That is a real, free structural filter,
+    # but it is NOT probe knowledge, and the old `rand_acc` (mean over ALL K
+    # rollouts) did not get it, so part of the reported probe lift was just
+    # "avoid a rollout that failed to emit </think>". We now report three
+    # baselines so the probe's actual contribution is separable:
+    #
+    #   rand_all      random pick over all K rollouts        (old baseline)
+    #   rand_filtered random pick over rollouts WITH </think> (same free filter
+    #                 the probe gets -- this is the honest denominator)
+    #   short_acc     pick the shortest <think> body, among those WITH </think>
+    #                 (a structural selector needing no probe at all)
     rng = np.random.RandomState(0)
-    first_acc, rand_acc, probe_acc, oracle_acc = [], [], [], []
+    first_acc, rand_acc, rand_filt_acc, short_acc, probe_acc, oracle_acc = [], [], [], [], [], []
     # Top-M enrichment accumulators.
     Ms = [1, 2, 4, 8]
     topM_correct = {M: [] for M in Ms}
@@ -113,8 +133,16 @@ def main() -> None:
     for pidx, idxs in per_problem.items():
         idxs = np.array(idxs)
         yy = y[idxs]; ps = probe_score[idxs]
+        hh = has_h[idxs]; tc = think_chars[idxs]
         first_acc.append(yy[0])
-        rand_acc.append(yy.mean())                       # expected random pick
+        rand_acc.append(yy.mean())                       # expected random pick, all K
+        rand_filt_acc.append(yy[hh].mean() if hh.any() else yy.mean())
+        # shortest <think>, restricted to rollouts that actually emitted one
+        if hh.any():
+            cand = np.where(hh)[0]
+            short_acc.append(yy[cand[int(np.argmin(tc[cand]))]])
+        else:
+            short_acc.append(yy[0])
         oracle_acc.append(1.0 if yy.max() == 1 else 0.0)  # pass@K
         probe_acc.append(yy[int(np.argmax(ps))])          # probe-best-of-K pick
         order = np.argsort(-ps)                            # high probe first
@@ -123,27 +151,42 @@ def main() -> None:
             if len(idxs) >= M:
                 topM_correct[M].append(yy[order[:M]].mean())
 
+    _rand = float(np.mean(rand_acc)); _randf = float(np.mean(rand_filt_acc))
+    _short = float(np.mean(short_acc)); _probe = float(np.mean(probe_acc))
+    _oracle = float(np.mean(oracle_acc))
     res = {
         "model": args.model, "rollouts_json": args.rollouts_json,
         "n_problems": len(per_problem), "probe_auroc_first_block": auroc,
         "pass_at_1_first_rollout": float(np.mean(first_acc)),
-        "random_pick": float(np.mean(rand_acc)),
-        "probe_best_of_K": float(np.mean(probe_acc)),
-        "oracle_pass_at_K": float(np.mean(oracle_acc)),
-        "lift_probe_over_random": float(np.mean(probe_acc) - np.mean(rand_acc)),
-        "frac_of_oracle_captured": float((np.mean(probe_acc) - np.mean(rand_acc))
-                                         / max(1e-9, np.mean(oracle_acc) - np.mean(rand_acc))),
+        "random_pick": _rand,
+        "random_pick_with_thinkclose": _randf,
+        "shortest_think_best_of_K": _short,
+        "probe_best_of_K": _probe,
+        "oracle_pass_at_K": _oracle,
+        "lift_probe_over_random": _probe - _rand,
+        "lift_probe_over_random_filtered": _probe - _randf,
+        "lift_shortest_over_random": _short - _rand,
+        "lift_probe_over_shortest": _probe - _short,
+        "frac_of_oracle_captured": float((_probe - _rand) / max(1e-9, _oracle - _rand)),
+        "frac_of_oracle_captured_by_shortest": float((_short - _rand) / max(1e-9, _oracle - _rand)),
         "topM_enrichment": {str(M): {"top_correct": float(np.mean(topM_correct[M])),
                                      "base_rate": float(np.mean(base_rate)),
                                      "ratio": float(np.mean(topM_correct[M]) / max(1e-9, np.mean(base_rate)))}
                             for M in Ms},
     }
     print("\n=== probe best-of-K selection (held-out) ===", flush=True)
-    print(f"  random pick (pass@1 baseline) : {res['random_pick']:.3f}", flush=True)
-    print(f"  probe best-of-K               : {res['probe_best_of_K']:.3f}  "
-          f"(+{res['lift_probe_over_random']*100:.1f} pp)", flush=True)
-    print(f"  oracle pass@K (ceiling)       : {res['oracle_pass_at_K']:.3f}", flush=True)
-    print(f"  fraction of oracle captured   : {res['frac_of_oracle_captured']*100:.0f}%", flush=True)
+    print(f"  random pick, all K rollouts      : {_rand:.3f}", flush=True)
+    print(f"  random pick, only those w/ </think>: {_randf:.3f}   "
+          f"({(_randf-_rand)*100:+.1f} pp free structural filter the probe also gets)", flush=True)
+    print(f"  pick SHORTEST <think>  (no probe) : {_short:.3f}   "
+          f"({(_short-_rand)*100:+.1f} pp vs all-K random)", flush=True)
+    print(f"  probe best-of-K                  : {_probe:.3f}   "
+          f"({(_probe-_rand)*100:+.1f} pp vs all-K random)", flush=True)
+    print(f"  oracle pass@K (ceiling)          : {_oracle:.3f}", flush=True)
+    print(f"  fraction of oracle captured      : probe {res['frac_of_oracle_captured']*100:.0f}%  "
+          f"vs shortest-<think> {res['frac_of_oracle_captured_by_shortest']*100:.0f}%", flush=True)
+    print(f"  >>> probe's gain OVER the free structural selector: "
+          f"{(_probe-_short)*100:+.1f} pp", flush=True)
     print("\n=== top-M-by-probe enrichment (probe_topk preview) ===", flush=True)
     for M in Ms:
         e = res["topM_enrichment"][str(M)]

@@ -124,12 +124,25 @@ def main():
                 picked = lst[-1][2]
             commit_correct[t] += picked
 
+    # DENOMINATOR CHECK. `verifier_acc` comes from the eval JSON, i.e. the
+    # verifier applied to the last <answer> block in the RAW TEXT. `last_acc`
+    # and the probe-commit fallback come from the last block present in the
+    # PHASE-2A CACHE. Those are the same block only when the cache captured
+    # every block of the rollout. Where they differ, "GAIN vs verifier" is
+    # partly measuring that discrepancy rather than the probe. Quantify it.
+    n_mismatch = sum(1 for (p, r), lst in by_rollout.items()
+                     if lst and lst[-1][2] != verifier_label.get((p, r), 0))
     print(f"\n[commit] analyzing {n_rollouts} multi-answer rollouts on 0.5B C_outcome clean-406")
     print(f"[commit] (excluded: rollouts where Phase 2A cache had no valid blocks)")
+    print(f"[commit] cache-last vs verifier-last disagree on {n_mismatch}/{n_rollouts} "
+          f"rollouts ({100*n_mismatch/max(1,n_rollouts):.1f}%) -- the 'GAIN vs verifier' "
+          f"below includes this bookkeeping difference, not just probe skill.")
     print(f"\n=== Baselines (committed-correctness aggregated over multi-answer rollouts) ===")
     print(f"  verifier-scored (eval JSON, last <answer> rule): {verifier_acc / n_rollouts:.4f}")
     print(f"  first-block correctness (oracle pick-first):     {first_acc / n_rollouts:.4f}")
     print(f"  last-block correctness (cache's last):           {last_acc / n_rollouts:.4f}")
+    print(f"  >>> like-for-like baseline for probe-commit is the CACHE-LAST row,")
+    print(f"      since probe-commit falls back to the cache's last block.")
 
     print(f"\n=== Probe-commit (commit at first block with probe >= T, else fall back to last) ===")
     print(f"{'threshold':>10} {'accuracy':>10} {'gain vs verifier':>18} {'fallback rate':>15}")
@@ -146,9 +159,47 @@ def main():
         print(f"{t:>10.2f} {acc:>10.4f} {gain:>+18.4f} {fall:>15.2%}{marker}")
         rows_for_json.append({"threshold": float(t), "accuracy": float(acc), "gain_vs_verifier": float(gain), "fallback_rate": float(fall)})
 
-    print(f"\nBest threshold = {best_t:.2f}  -> accuracy = {best_acc:.4f}")
+    print(f"\nBest threshold = {best_t:.2f}  -> accuracy = {best_acc:.4f}   [IN-SAMPLE]")
     print(f"vs verifier-scored baseline = {verifier_acc / n_rollouts:.4f}")
-    print(f"GAIN: {best_acc - verifier_acc / n_rollouts:+.4f}")
+    print(f"GAIN (in-sample): {best_acc - verifier_acc / n_rollouts:+.4f}")
+
+    # ---- Held-out threshold selection --------------------------------------
+    # `best_acc` above is the max over a 19-point sweep evaluated on the same
+    # rollouts, so it is optimistically biased -- it is a fitted parameter
+    # reported as a test score. Redo it with the threshold chosen on prompts the
+    # evaluated rollouts are not in: 2-fold by prompt_idx, pick T on the other
+    # fold, apply here, pool. This is the number that should go in the paper.
+    rollout_keys = sorted(by_rollout)
+    fold_of = {p: i % 2 for i, p in enumerate(sorted({p for p, _ in rollout_keys}))}
+    pooled_correct = 0
+    pooled_n = 0
+    chosen = {}
+    for held in (0, 1):
+        sel_keys = [k for k in rollout_keys if fold_of[k[0]] != held]   # choose T here
+        eval_keys = [k for k in rollout_keys if fold_of[k[0]] == held]  # score here
+        if not sel_keys or not eval_keys:
+            continue
+
+        def acc_at(keys, t):
+            tot = 0
+            for k in keys:
+                lst = by_rollout[k]
+                picked = next((bc for _bi, sc, bc in lst if sc >= t), None)
+                tot += lst[-1][2] if picked is None else picked
+            return tot / len(keys)
+
+        t_star = max(thresholds, key=lambda t: acc_at(sel_keys, t))
+        chosen[held] = float(t_star)
+        pooled_correct += acc_at(eval_keys, t_star) * len(eval_keys)
+        pooled_n += len(eval_keys)
+    heldout_acc = pooled_correct / pooled_n if pooled_n else float("nan")
+    heldout_gain = heldout_acc - verifier_acc / n_rollouts
+    print(f"\nHELD-OUT threshold selection (2-fold by prompt; T picked on the other fold):")
+    print(f"  chosen thresholds per fold: {chosen}")
+    print(f"  accuracy   = {heldout_acc:.4f}   (n={pooled_n})")
+    print(f"  GAIN vs verifier-last  = {heldout_gain:+.4f}   <-- report THIS, not the in-sample gain")
+    print(f"  GAIN vs cache-last     = {heldout_acc - last_acc / n_rollouts:+.4f}   "
+          f"<-- like-for-like (removes the cache-vs-text bookkeeping difference)")
 
     # Save
     summary = {
@@ -156,9 +207,15 @@ def main():
         "verifier_scored_acc": float(verifier_acc / n_rollouts),
         "first_block_oracle_acc": float(first_acc / n_rollouts),
         "last_block_acc": float(last_acc / n_rollouts),
-        "best_threshold": best_t,
-        "best_acc": float(best_acc),
-        "gain_vs_verifier": float(best_acc - verifier_acc / n_rollouts),
+        "best_threshold_in_sample": best_t,
+        "best_acc_in_sample": float(best_acc),
+        "gain_vs_verifier_in_sample": float(best_acc - verifier_acc / n_rollouts),
+        "heldout_threshold_acc": float(heldout_acc),
+        "heldout_threshold_gain_vs_verifier_last": float(heldout_gain),
+        "heldout_threshold_gain_vs_cache_last": float(heldout_acc - last_acc / n_rollouts),
+        "n_cache_last_vs_verifier_last_mismatch": int(n_mismatch),
+        "heldout_thresholds_per_fold": chosen,
+        "heldout_n": int(pooled_n),
         "by_threshold": rows_for_json,
     }
     os.makedirs(os.path.dirname(OUT_JSON) or ".", exist_ok=True)
@@ -172,9 +229,15 @@ def main():
         f"  first-block-correctness (oracle pick-first): {first_acc / n_rollouts:.4f}",
         f"  last-block-correctness (cache): {last_acc / n_rollouts:.4f}",
         f"",
-        f"  best probe-commit threshold: {best_t:.2f}",
-        f"  best probe-commit acc: {best_acc:.4f}",
-        f"  GAIN over verifier-scored baseline: {best_acc - verifier_acc / n_rollouts:+.4f}",
+        f"  IN-SAMPLE (threshold tuned on these same rollouts -- optimistic):",
+        f"    best probe-commit threshold: {best_t:.2f}",
+        f"    best probe-commit acc: {best_acc:.4f}",
+        f"    GAIN over verifier-scored baseline: {best_acc - verifier_acc / n_rollouts:+.4f}",
+        f"",
+        f"  HELD-OUT (2-fold by prompt; threshold picked on the other fold) -- report this:",
+        f"    thresholds per fold: {chosen}",
+        f"    acc: {heldout_acc:.4f}  (n={pooled_n})",
+        f"    GAIN over verifier-scored baseline: {heldout_gain:+.4f}",
     ]
     with open(OUT_TXT, "w") as f:
         f.write("\n".join(txt_lines) + "\n")

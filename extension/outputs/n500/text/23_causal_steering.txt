@@ -1,0 +1,29 @@
+Causal steering at </think>, L16 residual stream (C_outcome, clean-406 subset)
+  input: extension/outputs/n500/causal_steering_full.jsonl
+
+condition                  n  patched  acc_correct   acc_format   mean_score
+----------------------------------------------------------------------------
+zero alpha=+0.0           97        0        0.577        1.000        0.620
+probe alpha=+0.5          97       97        0.567        1.000        0.610
+probe alpha=+1.0          97       97        0.598        1.000        0.638
+probe alpha=+2.0          97       97        0.515        0.845        0.548
+rand alpha=+0.5           97       97        0.639        1.000        0.675
+rand alpha=+1.0           97       97        0.577        0.938        0.613
+rand alpha=+2.0           97       97        0.546        0.897        0.581
+
+Probe direction vs random direction at matched magnitude:
+(probe alpha k) - (random alpha k) accuracy delta:
+  alpha=+0.5: probe acc 0.567  vs  random acc 0.639  delta = -0.072
+  alpha=+1.0: probe acc 0.598  vs  random acc 0.577  delta = +0.021
+  alpha=+2.0: probe acc 0.515  vs  random acc 0.546  delta = -0.031
+
+Paired analysis (same prefix, different conditions):
+  n prefixes: 97
+  alpha=+0.5: probe gained 4, lost 5, both correct 51, both wrong 37  (n=97)
+  alpha=+1.0: probe gained 5, lost 3, both correct 53, both wrong 36  (n=97)
+  alpha=+2.0: probe gained 5, lost 11, both correct 45, both wrong 36  (n=97)
+
+Same analysis for random-direction control:
+  alpha=+0.5: random gained 6, lost 0, both correct 56, both wrong 35  (n=97)
+  alpha=+1.0: random gained 3, lost 3, both correct 53, both wrong 38  (n=97)
+  alpha=+2.0: random gained 3, lost 6, both correct 50, both wrong 38  (n=97)

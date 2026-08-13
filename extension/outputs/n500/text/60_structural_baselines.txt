@@ -1,0 +1,136 @@
+Structural controls for the </think> correctness probe
+  cache: extension/cache/probe_cache_n500_clean406   layer: L16   K: 16
+
+  Question: how much of the probe's AUROC and of its best-of-K lift is
+  available from WHERE the model closed <think>, with no probe at all?
+
+### C_SFT  L16   n_rows=5823  n_prompts=406  pos_frac=0.324
+  label rule: FIRST <answer> block (the paper's probe-AUROC rule), verifier = evaluation.countdown
+
+  (1) DISCRIMINATION — held-out balanced AUROC, GroupKFold(5) by prompt
+      probe (L16 residual, 896-d)          0.912
+      ONE SCALAR: </think> token index               0.790
+      structural 3-feature (pos, chars, #blocks)     0.796
+      39-feature surface battery (text only)        0.849
+      probe, STRATIFIED by </think>-position decile  0.852
+      position, stratified the same way (sanity)     0.510
+
+      [IN-SAMPLE, do not quote — fit and scored on the same rows]
+      probe, in-sample                              0.957
+      probe, in-sample + stratified                 0.928
+      The held-out rows above are the reportable ones. The stratification
+      cost is what differs most: held out it is +0.060, in sample only +0.029.
+
+  (2) SELECTION — best-of-16 on prompts with cached rollouts (n=406)
+      effective K: mean 14.34, min 7, 29.1% of prompts have the full 16
+      random pick (expected acc of 1 of 16)  0.3059
+      pick SHORTEST <think> (no probe)      0.4384   +13.3 pp   (37% of oracle gap)
+      39-feature surface model (no probe)   0.4310   +12.5 pp   (35% of oracle gap)
+      probe best-of-16                     0.5345   +22.9 pp   (65% of oracle gap)
+      oracle pass@16                       0.6601
+      >>> probe's gain OVER the free structural baseline: +9.6 pp
+      >>> probe's gain OVER the 39-feature surface model:  +10.3 pp
+      NOTE: 'random pick' is the expected accuracy of ONE of the K cached
+      rollouts, which is the right denominator for a best-of-K lift. It is
+      NOT the same estimator as first-rollout pass@1, and it is not the
+      pass@1 in probe_usefulness_suite_results_n406.json (a different
+      rollout sample). Do not mix the two inside one table.
+
+  (2b) PROMPT-CLUSTERED PAIRED BOOTSTRAP (10000 resamples, n=406 prompts)
+      arm           accuracy   95% CI
+      random          0.3059   [0.2765, 0.3359]
+      shortest        0.4384   [0.3892, 0.4877]
+      probe           0.5345   [0.4852, 0.5837]
+      oracle          0.6601   [0.6133, 0.7069]
+      surface39       0.4310   [0.3818, 0.4803]
+
+      contrast                  delta pp   95% CI (pp)        p
+      shortest - random           +13.26   [+9.92, +16.70]    0.0001  *
+      probe - random              +22.86   [+19.55, +26.17]    0.0001  *
+      probe - shortest             +9.61   [+5.42, +13.55]    0.0001  *
+      surface39 - random          +12.52   [+9.14, +15.94]    0.0001  *
+      probe - surface39           +10.34   [+6.65, +14.29]    0.0001  *
+      oracle - random             +35.42   [+32.24, +38.67]    0.0001  *
+
+      probe's share of oracle headroom  64.5%   [56.5%, 72.4%]
+      (bootstrapped as a ratio: the denominator is estimated on the same
+      prompts as the numerator and moves with it.)
+
+  (3) POPULATION — the cache's own 406 prompts (6496 rollouts); no-</think> rollouts are excluded from the cache
+      with </think>:    n= 5823  accuracy=0.3239
+      WITHOUT </think>: n=  673  accuracy=0.0000   (10.4% of all rollouts, dropped from every AUROC)
+
+  (4) DEPLOYMENT AUROC — full population, rule: unscoreable => predict wrong
+      cached-subset AUROC (what the paper reports)   0.912
+      full-population AUROC (+673 unscored rows)  0.924
+      of those 673: 673 had no </think>, 0 had one but were not cacheable (truncation)
+      note: the uncached rows are 10.4% of rollouts and ~100% wrong, so the free rule helps the WORSE checkpoint more.
+
+### C_outcome  L16   n_rows=6306  n_prompts=406  pos_frac=0.567
+  label rule: FIRST <answer> block (the paper's probe-AUROC rule), verifier = evaluation.countdown
+
+  (1) DISCRIMINATION — held-out balanced AUROC, GroupKFold(5) by prompt
+      probe (L16 residual, 896-d)          0.982
+      ONE SCALAR: </think> token index               0.915
+      structural 3-feature (pos, chars, #blocks)     0.914
+      39-feature surface battery (text only)        0.926
+      probe, STRATIFIED by </think>-position decile  0.939
+      position, stratified the same way (sanity)     0.564
+
+      [IN-SAMPLE, do not quote — fit and scored on the same rows]
+      probe, in-sample                              0.995
+      probe, in-sample + stratified                 0.981
+      The held-out rows above are the reportable ones. The stratification
+      cost is what differs most: held out it is +0.043, in sample only +0.013.
+
+  (2) SELECTION — best-of-16 on prompts with cached rollouts (n=406)
+      effective K: mean 15.53, min 8, 70.9% of prompts have the full 16
+      random pick (expected acc of 1 of 16)  0.5531
+      pick SHORTEST <think> (no probe)      0.6379   +8.5 pp   (64% of oracle gap)
+      39-feature surface model (no probe)   0.6379   +8.5 pp   (64% of oracle gap)
+      probe best-of-16                     0.6700   +11.7 pp   (89% of oracle gap)
+      oracle pass@16                       0.6847
+      >>> probe's gain OVER the free structural baseline: +3.2 pp
+      >>> probe's gain OVER the 39-feature surface model:  +3.2 pp
+      NOTE: 'random pick' is the expected accuracy of ONE of the K cached
+      rollouts, which is the right denominator for a best-of-K lift. It is
+      NOT the same estimator as first-rollout pass@1, and it is not the
+      pass@1 in probe_usefulness_suite_results_n406.json (a different
+      rollout sample). Do not mix the two inside one table.
+
+  (2b) PROMPT-CLUSTERED PAIRED BOOTSTRAP (10000 resamples, n=406 prompts)
+      arm           accuracy   95% CI
+      random          0.5531   [0.5110, 0.5956]
+      shortest        0.6379   [0.5911, 0.6847]
+      probe           0.6700   [0.6232, 0.7143]
+      oracle          0.6847   [0.6404, 0.7291]
+      surface39       0.6379   [0.5911, 0.6847]
+
+      contrast                  delta pp   95% CI (pp)        p
+      shortest - random            +8.49   [+6.18, +10.80]    0.0001  *
+      probe - random              +11.69   [+9.23, +14.21]    0.0001  *
+      probe - shortest             +3.20   [+0.99, +5.42]    0.0076  *
+      surface39 - random           +8.49   [+6.14, +10.90]    0.0001  *
+      probe - surface39            +3.20   [+0.99, +5.42]    0.0042  *
+      oracle - random             +13.17   [+10.89, +15.61]    0.0001  *
+
+      probe's share of oracle headroom  88.8%   [78.9%, 96.5%]
+      (bootstrapped as a ratio: the denominator is estimated on the same
+      prompts as the numerator and moves with it.)
+
+  (3) POPULATION — the cache's own 406 prompts (6496 rollouts); no-</think> rollouts are excluded from the cache
+      with </think>:    n= 6306  accuracy=0.5669
+      WITHOUT </think>: n=  190  accuracy=0.0000   (2.9% of all rollouts, dropped from every AUROC)
+
+  (4) DEPLOYMENT AUROC — full population, rule: unscoreable => predict wrong
+      cached-subset AUROC (what the paper reports)   0.982
+      full-population AUROC (+190 unscored rows)  0.983
+      of those 190: 190 had no </think>, 0 had one but were not cacheable (truncation)
+      note: the uncached rows are 2.9% of rollouts and ~100% wrong, so the free rule helps the WORSE checkpoint more.
+
+### Delta across checkpoints (does RL strengthen the probe, or just the length signal?)
+  probe AUROC (cached subset)            C_SFT 0.912 -> C_outcome 0.982   (+0.070)
+  probe AUROC (full population)          C_SFT 0.924 -> C_outcome 0.983   (+0.059)
+  position-only AUROC                    C_SFT 0.790 -> C_outcome 0.915   (+0.125)
+  probe AUROC | matched position         C_SFT 0.852 -> C_outcome 0.939   (+0.086)
+

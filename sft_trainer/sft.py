@@ -97,7 +97,11 @@ def train(
 
             predictions = logits[:, :-1, :]
             targets = input_ids[:, 1:]
-            mask = is_response_token[:, 1:]
+            # AND with attention_mask: is_response_token marks the whole
+            # right-padded response block as 1, including PAD positions, so
+            # without this the loss (and the reported accuracy) is computed over
+            # padding too. rloo_update_worker.py already does this.
+            mask = is_response_token[:, 1:] * attention_mask[:, 1:]
 
             per_token_loss = F.cross_entropy(predictions.reshape(-1, predictions.size(-1)), targets.reshape(-1), reduction='none').reshape(mask.shape)
             loss = (per_token_loss * mask).sum() / mask.sum().clamp(min=1)
@@ -130,7 +134,7 @@ def train(
                             eval_logits = model(input_ids=eval_input_ids, attention_mask=eval_attention_mask).logits
                             eval_predictions = eval_logits[:, :-1, :]
                             eval_targets = eval_input_ids[:, 1:]
-                            eval_mask = eval_is_response_token[:, 1:] 
+                            eval_mask = eval_is_response_token[:, 1:] * eval_attention_mask[:, 1:] 
                             eval_per_token_loss = F.cross_entropy(eval_predictions.reshape(-1, eval_predictions.size(-1)),eval_targets.reshape(-1),reduction='none').reshape(eval_mask.shape) 
                             total_eval_loss += (eval_per_token_loss * eval_mask).sum().item()
                             total_eval_tokens += eval_mask.sum().item()
@@ -154,7 +158,7 @@ def train(
             eval_logits = model(input_ids=eval_input_ids, attention_mask=eval_attention_mask).logits
             eval_predictions = eval_logits[:, :-1, :]
             eval_targets = eval_input_ids[:, 1:]
-            eval_mask = eval_is_response_token[:, 1:]
+            eval_mask = eval_is_response_token[:, 1:] * eval_attention_mask[:, 1:]
             eval_per_token_loss = F.cross_entropy(eval_predictions.reshape(-1, eval_predictions.size(-1)), eval_targets.reshape(-1), reduction='none').reshape(eval_mask.shape)
             total_eval_loss += (eval_per_token_loss * eval_mask).sum().item()
             total_eval_tokens += eval_mask.sum().item()

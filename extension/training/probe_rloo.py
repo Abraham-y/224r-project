@@ -125,11 +125,18 @@ def _install_probe_reward(probe_pkl_path: str, hybrid: bool, layer: int) -> None
         save_dir = _arg("save_dir", "/vol/checkpoints/rloo_probe_checkpoints")
         wandb_project = _arg("wandb_project", "rloo_probe_0.5b")
         wandb_name = _arg("wandb_name")
-        if wandb_name is None:
-            # Fall back to global glob if we can't determine current run
-            candidates = glob.glob(f"{save_dir}/*/*/latest_checkpoint/model")
-        else:
-            candidates = glob.glob(f"{save_dir}/{wandb_project}/{wandb_name}/latest_checkpoint/model")
+        # rloo.py writes to `latest_checkpoint/` on ordinary steps but to
+        # `epoch_{e}_step_{s}/` on every save_every_n_steps-th step. Globbing
+        # only `latest_checkpoint` therefore made the reference model go stale
+        # on exactly those steps -- the probe would score the current policy's
+        # rollouts using the weights from before the last save. Glob both and
+        # take the newest by mtime.
+        roots = ([f"{save_dir}/*/*"] if wandb_name is None
+                 else [f"{save_dir}/{wandb_project}/{wandb_name}"])
+        candidates: list[str] = []
+        for root in roots:
+            candidates += glob.glob(f"{root}/latest_checkpoint/model")
+            candidates += glob.glob(f"{root}/epoch_*_step_*/model")
         if not candidates:
             return None
         return max(candidates, key=lambda p: os.path.getmtime(p))

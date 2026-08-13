@@ -60,16 +60,39 @@ def train_and_eval(X_tr, y_tr, X_te, y_te) -> float:
     return float(roc_auc_score(y_te, proba))
 
 
-def held_out_eval(X, y, groups, X_eval, y_eval, groups_eval) -> float:
-    """Held-out: for each prompt in eval, train on rows whose prompt is NOT
-    in the eval prompt set, eval on rows in that prompt. Aggregate scores
-    across all eval prompts, then compute single AUROC.
+def grouped_transfer_auroc(X_tr, y_tr, g_tr, X_te, y_te, g_te, n_splits: int = 5) -> float:
+    """Cross-position AUROC with the SAME prompt-level holdout as the diagonal.
 
-    For cross-POSITION transfer this is overkill (positions are independent
-    within a prompt); we just train on all of (X, y) and eval on (X_eval, y_eval)
-    when the position kinds differ. For same-kind we use GroupKFold(5).
+    Positions are NOT independent within a prompt: the pre_answer row and the
+    assertion rows of a given rollout come from the same forward pass and carry
+    the same rollout-level label. Training on all of kind A and testing on all
+    of kind B therefore lets the model see the training-side rows of the very
+    rollouts it is scored on -- and puts a leaky estimator in the same table as
+    a clean GroupKFold diagonal, so the two are not comparable.
+
+    Here: fold the union of prompts, train on kind-A rows of the train prompts,
+    score kind-B rows of the held-out prompts, pool scores, one AUROC.
     """
-    return train_and_eval(X, y, X_eval, y_eval)
+    preds = np.full(len(y_te), np.nan)
+    all_prompts = np.unique(np.concatenate([g_tr, g_te]))
+    dummy = np.zeros(len(all_prompts))
+    for tr_p, te_p in GroupKFold(n_splits).split(dummy, dummy, all_prompts):
+        train_prompts = set(all_prompts[tr_p].tolist())
+        test_prompts = set(all_prompts[te_p].tolist())
+        tr_mask = np.array([g in train_prompts for g in g_tr])
+        te_mask = np.array([g in test_prompts for g in g_te])
+        if tr_mask.sum() < 10 or te_mask.sum() == 0:
+            continue
+        if len(np.unique(y_tr[tr_mask])) < 2:
+            continue
+        sc = StandardScaler().fit(X_tr[tr_mask])
+        clf = LogisticRegression(C=0.1, max_iter=2000).fit(
+            sc.transform(X_tr[tr_mask]), y_tr[tr_mask])
+        preds[te_mask] = clf.predict_proba(sc.transform(X_te[te_mask]))[:, 1]
+    m = ~np.isnan(preds)
+    if m.sum() == 0 or len(np.unique(y_te[m])) < 2:
+        return float("nan")
+    return float(roc_auc_score(y_te[m], preds[m]))
 
 
 def main():
@@ -118,14 +141,18 @@ def main():
                     mask = ~np.isnan(preds)
                     auc = float(roc_auc_score(y_tr[mask], preds[mask]))
                 else:
-                    # cross-position: train on full train_kind cell, eval on full eval_kind cell
-                    auc = train_and_eval(X_tr, y_tr, X_te, y_te)
+                    # cross-position, SAME prompt-level holdout as the diagonal
+                    # so the two are comparable (see grouped_transfer_auroc).
+                    auc = grouped_transfer_auroc(X_tr, y_tr, g_tr, X_te, y_te, g_te)
                 row += f"{auc:>12.3f}"
             out_lines.append(row)
 
     # Diagonal vs off-diagonal summary
     out_lines.append("\n" + "=" * 78)
     out_lines.append(
+        "Every cell (diagonal and off-diagonal) uses the same prompt-level\n"
+        "GroupKFold(5) holdout, so they are directly comparable.\n"
+        "\n"
         "If diagonals > off-diagonals: the probe direction for one position\n"
         "does NOT linearly transfer to another -- evidence that pre_answer\n"
         "and assertion encode distinct correctness subspaces."

@@ -1,0 +1,107 @@
+{
+  "_generated_by": "scripts/collect_poster_numbers.py",
+  "_note": "Two held-out AUROC estimators are reported per cell because the codebase uses both. balance_then_cv is what relabel_full_grid.py reports; cv_then_balance is what the README's 0.912/0.982 quotes. Pick ONE for the paper and say which.",
+  "probe_auroc_l16": {
+    "C_SFT": {
+      "neutral": {
+        "auroc_balance_then_cv": 0.5960844519609492,
+        "auroc_cv_then_balance": 0.6183516738645272,
+        "n_rows": 2901,
+        "pos_frac": 0.5163736642537056
+      },
+      "assertion": {
+        "auroc_balance_then_cv": 0.8866753356945888,
+        "auroc_cv_then_balance": 0.8851539480321782,
+        "n_rows": 3154,
+        "pos_frac": 0.4749524413443247
+      },
+      "pre_answer": {
+        "auroc_balance_then_cv": 0.9043988241763556,
+        "auroc_cv_then_balance": 0.9120772134688934,
+        "n_rows": 5823,
+        "pos_frac": 0.3238880302249699
+      }
+    },
+    "C_outcome": {
+      "neutral": {
+        "auroc_balance_then_cv": 0.6197681388243206,
+        "auroc_cv_then_balance": 0.6440555726113377,
+        "n_rows": 4039,
+        "pos_frac": 0.8878435256251548
+      },
+      "assertion": {
+        "auroc_balance_then_cv": 0.852323927813875,
+        "auroc_cv_then_balance": 0.8955034498609044,
+        "n_rows": 4043,
+        "pos_frac": 0.8869651249072471
+      },
+      "pre_answer": {
+        "auroc_balance_then_cv": 0.9795889472231233,
+        "auroc_cv_then_balance": 0.9819635976322412,
+        "n_rows": 6306,
+        "pos_frac": 0.5669203932762449
+      }
+    }
+  },
+  "causal_steering_vanilla": {
+    "baseline_acc": 0.5773195876288659,
+    "n_rows": 679,
+    "alphas": [
+      0.0,
+      0.5,
+      1.0,
+      2.0
+    ],
+    "probe": [
+      0.5773195876288659,
+      0.5670103092783505,
+      0.5979381443298969,
+      0.5154639175257731
+    ],
+    "rand": [
+      0.5773195876288659,
+      0.6391752577319587,
+      0.5773195876288659,
+      0.5463917525773195
+    ]
+  },
+  "goodhart_runA": {
+    "_source": "W&B run rloo_probe_reward/runA (init from C_outcome), probe-as-reward. No local artifact; re-export from W&B if these need to change.",
+    "steps": [
+      0,
+      10,
+      20,
+      30,
+      40,
+      50,
+      60,
+      70,
+      90,
+      99
+    ],
+    "probe": [
+      0.452,
+      0.447,
+      0.561,
+      0.553,
+      0.687,
+      0.809,
+      0.947,
+      0.978,
+      0.988,
+      0.991
+    ],
+    "verifier": [
+      0.572,
+      0.49,
+      0.582,
+      0.525,
+      0.528,
+      0.479,
+      0.385,
+      0.337,
+      0.31,
+      0.321
+    ]
+  }
+}

@@ -1,0 +1,86 @@
+Cosine similarity between probe direction vectors (input space)
+  cache: extension/cache/probe_cache_1.5b_clean406; trained on balanced subsample per cell
+
+======================================================================
+WITHIN-CHECKPOINT cross-position cosines
+======================================================================
+
+C_SFT:
+  L12:
+    cos(<assertion> , <pre_answer>) = +0.087
+    cos(<assertion> , <neutral>) = +0.063
+    cos(<neutral> , <pre_answer>) = +0.004
+  L16:
+    cos(<assertion> , <pre_answer>) = +0.059
+    cos(<assertion> , <neutral>) = +0.019
+    cos(<neutral> , <pre_answer>) = -0.006
+  L20:
+    cos(<assertion> , <pre_answer>) = +0.043
+    cos(<assertion> , <neutral>) = +0.081
+    cos(<neutral> , <pre_answer>) = +0.032
+
+C_outcome:
+  L12:
+    cos(<assertion> , <pre_answer>) = -0.001
+    cos(<assertion> , <neutral>) = +0.043
+    cos(<neutral> , <pre_answer>) = -0.013
+  L16:
+    cos(<assertion> , <pre_answer>) = +0.094
+    cos(<assertion> , <neutral>) = +0.005
+    cos(<neutral> , <pre_answer>) = +0.033
+  L20:
+    cos(<assertion> , <pre_answer>) = +0.063
+    cos(<assertion> , <neutral>) = +0.090
+    cos(<neutral> , <pre_answer>) = +0.021
+
+======================================================================
+CROSS-CHECKPOINT within-position cosines (C_SFT vs C_outcome)
+======================================================================
+
+L12:
+  cos(C_SFT-pre_answer, C_outcome-pre_answer) = +0.160
+  cos(C_SFT-assertion, C_outcome-assertion) = +0.138
+  cos(C_SFT-neutral, C_outcome-neutral) = +0.053
+
+L16:
+  cos(C_SFT-pre_answer, C_outcome-pre_answer) = +0.179
+  cos(C_SFT-assertion, C_outcome-assertion) = +0.093
+  cos(C_SFT-neutral, C_outcome-neutral) = +0.111
+
+L20:
+  cos(C_SFT-pre_answer, C_outcome-pre_answer) = +0.158
+  cos(C_SFT-assertion, C_outcome-assertion) = +0.107
+  cos(C_SFT-neutral, C_outcome-neutral) = +0.109
+
+======================================================================
+Probe vector norms (input space)
+======================================================================
+  cell                                   norm
+  C_SFT L12 assertion                   24.39
+  C_SFT L12 neutral                     12.45
+  C_SFT L12 pre_answer                  35.65
+  C_SFT L16 assertion                   19.66
+  C_SFT L16 neutral                     10.63
+  C_SFT L16 pre_answer                  31.48
+  C_SFT L20 assertion                   10.22
+  C_SFT L20 neutral                      6.11
+  C_SFT L20 pre_answer                  24.70
+  C_outcome L12 assertion               22.36
+  C_outcome L12 neutral                  7.36
+  C_outcome L12 pre_answer              36.78
+  C_outcome L16 assertion               14.23
+  C_outcome L16 neutral                  5.79
+  C_outcome L16 pre_answer              28.43
+  C_outcome L20 assertion                5.88
+  C_outcome L20 neutral                  3.17
+  C_outcome L20 pre_answer              19.55
+
+======================================================================
+HEADLINE
+======================================================================
+cos(C_SFT pre, C_SFT ass) at L16 = +0.059
+cos(C_outcome pre, C_outcome ass) at L16 = +0.094
+  ratio: change in within-ckpt cross-position cosine = +0.035
+
+cos(C_SFT pre, C_outcome pre) at L16 = +0.179
+cos(C_SFT ass, C_outcome ass) at L16 = +0.093

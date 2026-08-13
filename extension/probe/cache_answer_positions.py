@@ -28,7 +28,15 @@ if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
 
-_ANSWER_OPEN_RE = re.compile(r"<answer>")
+# Must enumerate the SAME blocks, in the same order, as
+# phase2a_per_answer_correctness.py -- which builds `per_block_correct` from
+# closed <answer>...</answer> pairs. Matching bare open tags instead would
+# desynchronise the indices the moment a rollout contains an unclosed or nested
+# <answer>, silently attaching block k's label to block k+1's activation.
+# (Measured on the shipped evals this hits ~0.03% of rollouts, so it did not
+# distort the published numbers -- but the invariant should hold by
+# construction, not by luck.)
+_ANSWER_BLOCK_RE = re.compile(r"<answer>(.*?)</answer>", re.DOTALL)
 
 
 def char_to_token_index(offsets: list[tuple[int, int]], char_idx: int) -> int | None:
@@ -99,9 +107,9 @@ def main():
         hidden_states = out.hidden_states  # tuple of (1, T, hidden_dim) bf16
 
         prompt_end_char = len(prompt_text)
-        # Find each '<answer>' occurrence in the response only.
+        # Find each closed <answer>...</answer> block in the response only.
         n_blocks_found = 0
-        for m in _ANSWER_OPEN_RE.finditer(response):
+        for m in _ANSWER_BLOCK_RE.finditer(response):
             block_idx = n_blocks_found
             char_in_full = prompt_end_char + m.start()
             tok_idx = char_to_token_index(offsets, char_in_full)
@@ -110,6 +118,12 @@ def main():
             if tok_idx is None or tok_idx >= input_ids.shape[1]:
                 n_blocks_found += 1
                 continue
+            if block_idx >= len(per_block_correct):
+                # Should be impossible now that both sides enumerate closed
+                # pairs; loud rather than silently emitting a None label.
+                print(f"[answers-cache] WARNING: block {block_idx} of rollout "
+                      f"({p_idx},{r_idx}) has no per_block_correct entry "
+                      f"(len={len(per_block_correct)}); label set to None", flush=True)
             block_correct = per_block_correct[block_idx] if block_idx < len(per_block_correct) else None
             for layer in args.layers:
                 vec = hidden_states[layer][0, tok_idx].float().cpu().numpy()

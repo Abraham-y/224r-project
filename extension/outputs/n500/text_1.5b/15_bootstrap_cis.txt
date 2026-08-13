@@ -1,0 +1,11 @@
+Bootstrap 95% CI on probe AUROC (L16, B=100, cluster on prompt_idx)
+Cache: extension/cache/probe_cache_1.5b_clean406
+
+checkpoint   kind              point    median                95% CI
+------------------------------------------------------------------------
+C_SFT        pre_answer        0.853     0.851  [ 0.834,  0.867]
+C_SFT        assertion         0.837     0.830  [ 0.814,  0.848]
+C_SFT        neutral           0.557     0.563  [ 0.541,  0.588]
+C_outcome    pre_answer        0.968     0.969  [ 0.963,  0.975]
+C_outcome    assertion         0.822     0.812  [ 0.752,  0.869]
+C_outcome    neutral           0.584     0.551  [ 0.496,  0.608]

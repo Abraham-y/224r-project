@@ -1,0 +1,17 @@
+Phase 2A pre-flight: per-answer correctness within C_outcome multi-answer rollouts
+  source: eval_c_outcome_n500.json filtered to clean-406 prompts
+
+Total C_outcome rollouts (clean-406): 6496
+  zero answer blocks:         214  (3.3%)
+  single answer block:        824  (12.7%)
+  multi-answer (>=2 blocks):  5458  (84.0%)
+
+FIRST-vs-LAST answer correctness transitions (multi-answer rollouts only):
+  first=T, last=T (both correct):                          2983
+  first=T, last=F (started correct, DRIFTED TO WRONG):     490
+  first=F, last=T (started wrong, drifted TO CORRECT):     150
+  first=F, last=F (both wrong):                            1835
+
+Interpretation:
+  (T->F) rate is the post-think drift pathology rate.
+  Of 5458 multi-answer rollouts, 490 (9.0%) drift away from a correct first answer.

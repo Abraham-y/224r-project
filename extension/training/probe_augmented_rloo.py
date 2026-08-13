@@ -88,11 +88,18 @@ def main() -> None:
     lambda_mix    = float(_pop_value("lambda_mix", "0.5"))
 
     # The plumbing for "compute probe per rollout and pass into update worker"
-    # already exists via Anagha's --probe_baseline path in rloo.py. We turn it
-    # on, and additionally inject `lambda_mix` so the worker mixes probe + reward
-    # at baseline-construction time. The worker reads this from an env var so we
-    # don't have to thread a new ctor arg through Ray.
+    # already exists via the --probe_baseline path in rloo.py. We turn it on and
+    # pass lambda_mix through as an explicit CLI flag, which rloo.py forwards as
+    # a constructor argument to the Ray actor.
+    #
+    # The env var is still set for older launchers, but it is NO LONGER the
+    # transport: it used to be, and if it failed to reach the separately-spawned
+    # Ray worker the run silently degraded to lambda=0 (the pure probe baseline
+    # -- a different experiment) with no error. The worker now logs the lambda
+    # it actually resolved, and its source, on the first update.
     os.environ["PROBE_AUG_LAMBDA"] = f"{lambda_mix:.4f}"
+    if "--probe_aug_lambda" not in sys.argv:
+        sys.argv += ["--probe_aug_lambda", f"{lambda_mix:.4f}"]
 
     # Now hand off the remaining argv to rloo.py with --probe_baseline enabled.
     # The probe-value piping (probe_value_model / probe_value_pkl etc.) is the

@@ -1,0 +1,30 @@
+PHASE 2A pattern analysis (within-rollout probe trajectory)
+  ckpt=C_outcome, layer=L16
+  cache: extension/cache/probe_cache_n500_clean406; answers: extension/cache/probe_cache_n500_answers
+
+Probe diagonal AUROC (held-out by prompt) at pre_answer: 0.895
+Multi-answer rollouts analyzed: 4393
+
+transition     n    probe(first)    probe(last)  last-first  first_acc   last_acc
+----------------------------------------------------------------------------
+TT      2335           0.001          0.558      +0.557        1.00        1.00
+TF       387           0.001          0.361      +0.361        1.00        0.00
+FT       121           0.000          0.622      +0.622        0.00        1.00
+FF      1550           0.000          0.352      +0.352        0.00        0.00
+
+==============================================================================
+Pattern A vs B vs C discrimination
+==============================================================================
+
+Pattern A predicts: probe(last) tracks last_correct -> probe(last) on T->F is LOW (~0.3)
+Pattern B predicts: probe(last) tracks first_correct -> probe(last) on T->F is HIGH (~0.7)
+
+On T->F rollouts (n=387):
+  mean probe(first) = 0.001  (first answer is correct, probe expects ~high)
+  mean probe(last)  = 0.361  (last answer is wrong, probe expects ~low under A, ~high under B)
+  reference: probe(last) on T->T rollouts = 0.558
+  reference: probe(last) on F->F rollouts = 0.352
+
+On F->T rollouts (n=121):
+  mean probe(first) = 0.000
+  mean probe(last)  = 0.622
