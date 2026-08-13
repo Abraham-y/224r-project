@@ -295,6 +295,30 @@ different and must be stated: n = 1 training run.** A single-seed RL delta of
 | 88 | "statistically indistinguishable from random-direction perturbation at every tested magnitude" | false at one point — vanilla α = 0.5 gives Δ = −0.072, CI [−0.141, −0.010], excludes zero. Either drop "every" or report the exception |
 | 10 | "near-oracle" as a gloss on AUROC 0.982 | now defensible on its own terms — 89% of oracle selection headroom (§B1) |
 
+### D2. Two applied figures were the in-sample ones — and the artifacts said so
+
+**NEW 2026-08-13.** `CODE_AUDIT.md` §C4 flags three scripts that select a
+threshold on the evaluation data. Two of those numbers are in the paper, and in
+both cases the producing script **already computes the held-out version and
+prints "report this" next to it**. The draft quoted the line above it.
+
+| figure | in-sample (was quoted) | held-out (correct) |
+|---|---|---|
+| probe-guided restart | 0.675 at 6.27 avg rollouts | **0.6675 at 5.54** |
+| within-rollout probe-commit | 0.6607 | **0.6601** (+8.61 pp over baseline) |
+
+Both are in `32_probe_guided_restart.txt` and `26_probe_answer_commit.txt` under
+explicit `BEST (IN-SAMPLE ... optimistic)` / `BEST (HELD-OUT ...) -- report this`
+headers. The gap is small — the objective is flat over the grid — but "we tuned
+two hyperparameters on the test set" is not a sentence worth risking for 0.7 pp,
+and the fix reads better anyway: **restart is now level with best-of-16 (0.6675
+vs 0.6700) at −64% of the sampling compute**, which is a cleaner claim than
+beating it by 0.5 pp.
+
+Selective abstention is **not** affected. Its threshold is chosen to hit a
+*coverage* target, not to maximise the reported accuracy, so the 0.980-at-50%
+figure is not selected on the quantity it reports.
+
 ### D1. One AUROC table, three estimator conventions
 
 **NEW 2026-08-12.** Not previously in this pack, and it is the one remaining
