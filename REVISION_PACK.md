@@ -295,6 +295,28 @@ different and must be stated: n = 1 training run.** A single-seed RL delta of
 | 88 | "statistically indistinguishable from random-direction perturbation at every tested magnitude" | false at one point — vanilla α = 0.5 gives Δ = −0.072, CI [−0.141, −0.010], excludes zero. Either drop "every" or report the exception |
 | 10 | "near-oracle" as a gloss on AUROC 0.982 | now defensible on its own terms — 89% of oracle selection headroom (§B1) |
 
+### D3. The geometry sentence overstates both of its numbers
+
+**NEW 2026-08-13.** `writeup_workshop.tex` claimed *"within-checkpoint
+cross-position cosines ≤ 0.10 while cross-checkpoint within-position transfer
+AUROC stays ≥ 0.95."* Measured on clean-406 (`41_relabel_cosines.txt`,
+`40_relabel_cross_checkpoint.txt`), neither bound holds:
+
+| claim | measured |
+|---|---|
+| cross-position cosines ≤ 0.10 | C_SFT `pre_answer`/`assertion` = **0.1042** |
+| cross-checkpoint transfer ≥ 0.95 | C_SFT→C_outcome **0.953**, C_outcome→C_SFT **0.822** |
+
+The transfer is **asymmetric** and the sentence quoted only the favourable
+direction. The underlying point survives and is more interesting stated
+correctly: the cross-checkpoint *same-position* cosine is only **0.169**, yet the
+probe still transfers at 0.953 one way — near-orthogonal directions reading the
+same signal is exactly the wide-subspace picture, and it is a better argument
+than a bound that does not hold.
+
+Unrelated to `CODE_AUDIT.md` §C5, which concerns leakage in the cross-*position*
+AUROC table; that table is not quoted in the paper.
+
 ### D2. Two applied figures were the in-sample ones — and the artifacts said so
 
 **NEW 2026-08-13.** `CODE_AUDIT.md` §C4 flags three scripts that select a
