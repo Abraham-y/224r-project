@@ -52,13 +52,29 @@ significant and a non-significant result, which is itself not significant
 (Gelman–Stern). The three steering runs also share **zero prompts**, so they are
 not paired.
 
-**Replacement:** two sentences in Limitations. Something like — *we attempted a
-causal test of whether RL makes the probe direction causal; the steering hook was
-placed one block and 2–3 tokens downstream of the probe's read site, the steered
-vector has cosine 0.163 with the direction actually optimized, and the key
-contrast reaches only p = 0.063. We report it as inconclusive.* Volunteering this
-is worth more than defending it: it is discoverable from the released artifacts in
-under an hour.
+**Replacement: nothing in the paper. Cut the section and say nothing.**
+
+*(Revised 2026-08-13. This previously said to put two sentences in Limitations.
+That was wrong, and the reasoning behind it was sentimental rather than
+strategic.)* A reviewer scores the claims the paper makes. A paragraph explaining
+why a result you are **not** claiming does not hold advances no claim, costs page
+budget you do not have, and invites the reader to wonder what else in the paper
+has a bug of the same class. Papers drop experiments all the time and nobody
+audits the absence of a claim. The withdrawal was ~1/3 of a page against a 9-page
+limit and bought nothing.
+
+**But the claim is public, and that part is not optional.** It is live right now
+in the README on the public GitHub repo (the `+0.083` row, and a comment in the
+§4 steering recipe). It was never posted to arXiv — the two `arxiv_*.zip` bundles
+were built and never sent — so GitHub is the entire public surface. The
+correction belongs exactly there and nowhere else:
+
+- **README:** keep the withdrawal note. It corrects an actually-public claim, and
+  the audience is someone who might otherwise rerun `causal_steering.py` and get
+  different numbers than the shipped JSONLs.
+- **`causal_steering.py`:** keep the `--layer_convention` / `--steer_position`
+  fixes regardless. That is code correctness, independent of what any paper says.
+- **Paper:** nothing. Do not mention it.
 
 ---
 
