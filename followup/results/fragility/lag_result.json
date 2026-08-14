@@ -1,0 +1,182 @@
+{
+  "layer": 16,
+  "arm": "on_policy",
+  "runs": {
+    "runA (probe-as-reward)": {
+      "run_id": "phase0_harvest_runA",
+      "seeds": [
+        0,
+        1,
+        2
+      ],
+      "identical_seed_pairs": [
+        [
+          0,
+          1
+        ],
+        [
+          0,
+          2
+        ],
+        [
+          1,
+          2
+        ]
+      ],
+      "by_step": {
+        "0": {
+          "auroc_mean": 0.7873566367156112,
+          "auroc_min": 0.7873566367156111,
+          "auroc_max": 0.7873566367156111,
+          "n_seeds": 3,
+          "probe_score_mean": 0.4598543513668669,
+          "verifier_acc": 0.3718905472636816
+        },
+        "10": {
+          "auroc_mean": 0.7720101654375124,
+          "auroc_min": 0.7720101654375124,
+          "auroc_max": 0.7720101654375124,
+          "n_seeds": 3,
+          "probe_score_mean": 0.4906969557426654,
+          "verifier_acc": 0.3076448828606658
+        },
+        "20": {
+          "auroc_mean": 0.79238423268274,
+          "auroc_min": 0.79238423268274,
+          "auroc_max": 0.79238423268274,
+          "n_seeds": 3,
+          "probe_score_mean": 0.5208869702717731,
+          "verifier_acc": 0.31248073959938366
+        },
+        "30": {
+          "auroc_mean": 0.7822692059723487,
+          "auroc_min": 0.7822692059723487,
+          "auroc_max": 0.7822692059723487,
+          "n_seeds": 3,
+          "probe_score_mean": 0.5815563180571158,
+          "verifier_acc": 0.2905613818630475
+        },
+        "40": {
+          "auroc_mean": 0.7623391602630357,
+          "auroc_min": 0.7623391602630357,
+          "auroc_max": 0.7623391602630357,
+          "n_seeds": 3,
+          "probe_score_mean": 0.6767720086822596,
+          "verifier_acc": 0.3015432098765432
+        },
+        "50": {
+          "auroc_mean": 0.6789874551971327,
+          "auroc_min": 0.6789874551971327,
+          "auroc_max": 0.6789874551971327,
+          "n_seeds": 3,
+          "probe_score_mean": 0.8244470646941352,
+          "verifier_acc": 0.26024022174314754
+        },
+        "60": {
+          "auroc_mean": 0.6481557305943995,
+          "auroc_min": 0.6481557305943995,
+          "auroc_max": 0.6481557305943995,
+          "n_seeds": 3,
+          "probe_score_mean": 0.9426871255278403,
+          "verifier_acc": 0.18601786264243916
+        },
+        "70": {
+          "auroc_mean": 0.5702988483326425,
+          "auroc_min": 0.5702988483326425,
+          "auroc_max": 0.5702988483326425,
+          "n_seeds": 3,
+          "probe_score_mean": 0.96563673510355,
+          "verifier_acc": 0.1484447182014167
+        },
+        "80": {
+          "auroc_mean": 0.5729016786570744,
+          "auroc_min": 0.5729016786570744,
+          "auroc_max": 0.5729016786570744,
+          "n_seeds": 3,
+          "probe_score_mean": 0.9764021771474042,
+          "verifier_acc": 0.14839901477832512
+        },
+        "90": {
+          "auroc_mean": 0.6165173009685327,
+          "auroc_min": 0.6165173009685327,
+          "auroc_max": 0.6165173009685327,
+          "n_seeds": 3,
+          "probe_score_mean": 0.9867302672064527,
+          "verifier_acc": 0.14109673444239063
+        },
+        "99": {
+          "auroc_mean": 0.5501312236126431,
+          "auroc_min": 0.5501312236126431,
+          "auroc_max": 0.5501312236126431,
+          "n_seeds": 3,
+          "probe_score_mean": 0.9886001244427393,
+          "verifier_acc": 0.13269704433497537
+        }
+      }
+    },
+    "vanilla RLOO (control)": {
+      "run_id": "vanilla_rloo_ladder",
+      "seeds": [
+        0,
+        1,
+        2
+      ],
+      "identical_seed_pairs": [
+        [
+          0,
+          1
+        ],
+        [
+          0,
+          2
+        ],
+        [
+          1,
+          2
+        ]
+      ],
+      "by_step": {
+        "0": {
+          "auroc_mean": 0.7679223223893742,
+          "auroc_min": 0.7679223223893742,
+          "auroc_max": 0.7679223223893742,
+          "n_seeds": 3,
+          "probe_score_mean": 0.022963086198164385,
+          "verifier_acc": 0.26584234930448225
+        },
+        "30": {
+          "auroc_mean": 0.8065541697236488,
+          "auroc_min": 0.8065541697236488,
+          "auroc_max": 0.8065541697236488,
+          "n_seeds": 3,
+          "probe_score_mean": 0.6304574264397922,
+          "verifier_acc": 0.6618863761720905
+        },
+        "60": {
+          "auroc_mean": 0.8973521613272033,
+          "auroc_min": 0.8973521613272033,
+          "auroc_max": 0.8973521613272033,
+          "n_seeds": 3,
+          "probe_score_mean": 0.5362953066561961,
+          "verifier_acc": 0.4553224553224553
+        },
+        "90": {
+          "auroc_mean": 0.913954967412931,
+          "auroc_min": 0.913954967412931,
+          "auroc_max": 0.913954967412931,
+          "n_seeds": 3,
+          "probe_score_mean": 0.5255164049519269,
+          "verifier_acc": 0.4737245876486383
+        },
+        "100": {
+          "auroc_mean": 0.9107943765810146,
+          "auroc_min": 0.9107943765810146,
+          "auroc_max": 0.9107943765810146,
+          "n_seeds": 3,
+          "probe_score_mean": 0.5545905053480327,
+          "verifier_acc": 0.5130034887408818
+        }
+      }
+    }
+  }
+}

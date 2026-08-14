@@ -1,0 +1,35 @@
+The ~40-step lag -- recomputed from the parquet metric store
+  layer 16, arm 'on_policy', all seeds present, latest row per (step, metric, seed)
+
+### runA (probe-as-reward)   seeds=[0, 1, 2]   IDENTICAL: [(0, 1), (0, 2), (1, 2)]
+
+   step            auroc_frozen   probe score    true acc
+  --------------------------------------------------------
+      0     0.787 [0.787,0.787]         0.460       0.372
+     10     0.772 [0.772,0.772]         0.491       0.308
+     20     0.792 [0.792,0.792]         0.521       0.312
+     30     0.782 [0.782,0.782]         0.582       0.291
+     40     0.762 [0.762,0.762]         0.677       0.302
+     50     0.679 [0.679,0.679]         0.824       0.260
+     60     0.648 [0.648,0.648]         0.943       0.186
+     70     0.570 [0.570,0.570]         0.966       0.148
+     80     0.573 [0.573,0.573]         0.976       0.148
+     90     0.617 [0.617,0.617]         0.987       0.141
+     99     0.550 [0.550,0.550]         0.989       0.133
+
+  CLAIM 1  AUROC flat through step 40: span 0.030 over steps 0-40
+  CLAIM 2  drop by step 50: 0.762 -> 0.679 (-0.083)
+           largest step-to-step move while flat: 0.020; the drop is 4.1x that
+
+### vanilla RLOO (control)   seeds=[0, 1, 2]   IDENTICAL: [(0, 1), (0, 2), (1, 2)]
+
+   step            auroc_frozen   probe score    true acc
+  --------------------------------------------------------
+      0     0.768 [0.768,0.768]         0.023       0.266
+     30     0.807 [0.807,0.807]         0.630       0.662
+     60     0.897 [0.897,0.897]         0.536       0.455
+     90     0.914 [0.914,0.914]         0.526       0.474
+    100     0.911 [0.911,0.911]         0.555       0.513
+
+  CONTROL  frozen AUROC 0.768 (step 0) -> 0.911 (step 100)
+
