@@ -199,6 +199,11 @@ def main() -> None:
                 out["runs"].setdefault(label, {})["balanced_per_seed"] = {
                     str(c): {"drop": float(dc), "flat_span": float(sc)}
                     for c, (dc, sc) in per_seed.items()}
+                out["runs"][label]["balanced_by_step"] = {
+                    str(int(step)): {"mean": float(bal.loc[step].mean()),
+                                     "min": float(bal.loc[step].min()),
+                                     "max": float(bal.loc[step].max())}
+                    for step in bal.index}
                 L.append("")
 
             for step, want in PUBLISHED_RUNA_BALANCED.items():
