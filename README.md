@@ -1,10 +1,8 @@
 # Reading vs. Writing a Near-Oracle Internal Verifier
 
-**Stanford CS 224R class project — Abraham Yeung & Anagha Ramaswamy.**
+**Abraham Yeung & Anagha Ramaswamy.**
 
 This repository contains the code and experimental artifacts for our investigation of when a near-oracle linear correctness probe on a small language model's hidden states is safe to wire into RL training, and when it catastrophically fails. The headline finding is a **reader/writer asymmetry**: the same probe direction is excellent as a deployment selector, causally inert under intervention on the vanilla checkpoint, and a catastrophic Goodhart trap when used as the RL reward — and the difference between those outcomes is entirely determined by how much policy-gradient access the probe receives.
-
-The repository is organised around the **`extension/`** directory, which contains the research code that produced the experimental results. The class-provided trainer scaffolds (`sft_trainer/`, `ipo_trainer/`, `rloo_trainer/`, `evaluation/`) are kept for reproducibility, with our additions (notably the LOO probe-baseline integration in `rloo_trainer/rloo_update_worker.py`).
 
 ---
 
@@ -24,8 +22,6 @@ Working on Qwen2.5-0.5B (replicated at 1.5B) trained on Countdown arithmetic wit
 | **Safe constructions** that bound or eliminate probe gradient access give either small lifts or no Goodhart — **and none beats read-only selection.** | Probe-as-baseline (LOO control variate): target-invariant, untested. Multiplicative shaping `r = verifier × probe`: `+2.84 pp` first-block, CI `[+1.85, +3.85]`, n=1 run. Probe-best-of-K in-training selection: `+1.5 pp`, halves mean blocks per rollout, n=1 run. Read-only best-of-16: `+11.7 pp`. |
 
 **Withdrawn.** An earlier version of this README claimed a mech-interp signature of Goodhart — the optimised probe direction becoming causal post-RL (Δ = `+0.083`) while a near-orthogonal control stayed null. That result does not survive checking and is retracted: the steered vector has cosine `0.163` with the probe RL actually optimised (not `1.000`) and AUROC `0.896` (not `0.982`), the steering hook sat one transformer block and 2–3 tokens downstream of the probe's read site, the key contrasts reach only p = 0.063 and p = 0.080, and the three steering runs share zero prompts. `causal_steering.py` now fixes both the layer index and the token position, so it will not reproduce the published JSONLs; use `--layer_convention legacy_block --steer_position last_token` if you need to. See `REVISION_PACK.md` §A.
-
-Full writeup: `writeup_workshop.md` (and `writeup_workshop.tex`).
 
 ---
 
@@ -63,9 +59,9 @@ extension/                       # All research-extension code lives here
 
 rloo_trainer/
 ├── rloo_update_worker.py                 # Standard RLOO update + LOO probe-baseline path
-└── ...                                   # Class-provided scaffolds
+└── ...                                   # Scaffolds
 
-sft_trainer/, ipo_trainer/                # Class-provided scaffolds (used for the SFT step only)
+sft_trainer/, ipo_trainer/                # Scaffolds (used for the SFT step only)
 
 scripts/
 ├── make_poster_figures.py                # Matplotlib PDFs for the four headline figures
@@ -208,7 +204,6 @@ The `--probe_baseline` flag in `rloo_trainer/rloo_update_worker.py` replaces the
 
 ## What this repository does *not* contain
 
-- The CS 224R report PDF/source and personal research notes. Those are kept privately and are not pushed to this repository.
 - Trained checkpoints, cached activations, and large eval JSONs (>5 MB). Reproduce with the scripts above.
 - The probe-as-baseline empirical results; see the report's "Failed Attempts and Null Results" section — the construction is code-complete but a controlled run-time comparison is out of scope.
 
