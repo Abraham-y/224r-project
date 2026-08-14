@@ -58,6 +58,12 @@ IDENTITY_PATTERNS = [
     r"CS\s?224\s?R",
     r"Anikait",
     r"github\.com/Abraham-y",
+    # The repo has been renamed once already (cs224r-project ->
+    # reader-writer-probe-rl). Match the repo NAME too, not just the owner path:
+    # a rename that the URL replacement above missed would otherwise sail through
+    # this check and de-anonymise the submission.
+    r"reader-writer-probe-rl",
+    r"cs224r-project",
     r"A\.Y\.",
     r"A\.R\.",
 ]
@@ -122,7 +128,7 @@ def anonymise(body: str) -> str:
     # convention; a bare removal would make the reproducibility appendix read as
     # though no code exists, which is worse than saying it is withheld for review.
     body = body.replace(
-        r"\url{https://github.com/Abraham-y/cs224r-project}",
+        r"\url{https://github.com/Abraham-y/reader-writer-probe-rl}",
         r"\texttt{[code repository withheld for anonymous review]}",
     )
     body = body.replace(
