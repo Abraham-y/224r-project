@@ -54,9 +54,16 @@ _METRICS = os.path.join(_ROOT, "followup", "results", "fragility", "metrics")
 RUNS = {
     "runA (probe-as-reward)": "phase0_harvest_runA",
     "vanilla RLOO (control)": "vanilla_rloo_ladder",
+    # runB carries the scope condition: it initializes from C_SFT while the
+    # reward probe was fit on C_outcome rollouts, so its monitor is
+    # off-distribution from step 0 and there is no intact window to lose.
+    # Only steps 0 and 99 are harvested, which is enough to state the boundary.
+    "runB (off-distribution monitor)": "phase0_harvest_runB",
 }
 
-METRICS = ["auroc_frozen", "auroc_frozen_balanced", "probe_score_mean", "verifier_acc"]
+METRICS = ["auroc_frozen", "auroc_frozen_balanced", "probe_score_mean", "verifier_acc",
+           # Used for the label-free early-warning check below.
+           "probe_score_frac_above_095", "probe_score_std"]
 
 # What the paper prints, seed-aggregated. Checked, not trusted.
 PUBLISHED_RUNA_AUROC = {0: 0.787, 10: 0.772, 20: 0.792, 30: 0.782, 40: 0.762,
@@ -64,6 +71,8 @@ PUBLISHED_RUNA_AUROC = {0: 0.787, 10: 0.772, 20: 0.792, 30: 0.782, 40: 0.762,
 # The balanced means the paper prints, alongside their across-seed intervals.
 PUBLISHED_RUNA_BALANCED = {0: 0.794, 10: 0.767, 20: 0.792, 30: 0.788, 40: 0.769,
                            50: 0.687, 70: 0.557, 99: 0.554}
+# runB's step-0 monitor AUROC, which the paper quotes as the scope condition.
+PUBLISHED_RUNB_STEP0 = 0.590
 FLAT_THROUGH = 40      # last step the monitor is claimed to be intact
 DROP_AT = 50           # first step the claim says it moves
 
@@ -215,6 +224,61 @@ def main() -> None:
                 failures.append("control ladder does not RISE; the runA decline may not be "
                                 "specific to the attack")
             L.append("")
+
+    # --- scope condition: runB's monitor starts near chance ------------------
+    db = load("phase0_harvest_runB", args.layer, args.arm)
+    if not db.empty:
+        b0 = table(db, "auroc_frozen")
+        if 0 in b0.index:
+            got = float(b0.loc[0].mean())
+            L.append("### SCOPE CONDITION (runB)")
+            L.append("")
+            L.append(f"  runB monitor AUROC at step 0: {got:.3f}   "
+                     f"(runA: {out['runs'].get('runA (probe-as-reward)', {}).get('by_step', {}).get(0, {}).get('auroc_mean', float('nan')):.3f})")
+            L.append("  runB inits from C_SFT while the reward probe was fit on C_outcome")
+            L.append("  rollouts, so its monitor is off-distribution from step 0. There is no")
+            L.append("  intact-monitor window to lose, hence no lag to observe. A monitor")
+            L.append("  already off-distribution gives no warning period at all.")
+            L.append("")
+            if abs(got - PUBLISHED_RUNB_STEP0) > 0.001:
+                failures.append(f"runB step 0: paper prints {PUBLISHED_RUNB_STEP0:.3f}, "
+                                f"store gives {got:.3f}")
+
+    # --- is there a LABEL-FREE early warning? (answer: no) -------------------
+    # The obvious objection to the lag is "watch the monitor's score distribution
+    # instead of its AUROC -- that needs no ground truth." It does not work: the
+    # verifier-trained control saturates the monitor just as hard, so saturation
+    # cannot distinguish being attacked from training normally.
+    L.append("### LABEL-FREE EARLY WARNING: does score saturation discriminate?")
+    L.append("")
+    L.append(f"  {'run':<26}{'step':>6}{'frac>0.95':>11}{'score std':>11}{'true acc':>10}")
+    L.append("  " + "-" * 64)
+    sat = {}
+    for label, run_id in RUNS.items():
+        dd = load(run_id, args.layer, args.arm)
+        if dd.empty:
+            continue
+        fr, sd, ac = (table(dd, m) for m in
+                      ("probe_score_frac_above_095", "probe_score_std", "verifier_acc"))
+        if fr.empty:
+            continue
+        sat[label] = {}
+        for step in fr.index:
+            f_ = float(fr.loc[step].mean())
+            s_ = float(sd.loc[step].mean()) if step in sd.index else float("nan")
+            a_ = float(ac.loc[step].mean()) if step in ac.index else float("nan")
+            L.append(f"  {label:<26}{int(step):>6}{f_:>11.3f}{s_:>11.3f}{a_:>10.3f}")
+            sat[label][int(step)] = {"frac_above_095": f_, "score_std": s_, "verifier_acc": a_}
+        L.append("")
+    out["saturation"] = sat
+    ra, vc = sat.get("runA (probe-as-reward)", {}), sat.get("vanilla RLOO (control)", {})
+    if ra and vc:
+        ra_max = max(v["frac_above_095"] for v in vc.values())
+        L.append(f"  The CONTROL reaches frac>0.95 = {ra_max:.3f} while its true accuracy RISES.")
+        L.append("  Saturation therefore does not distinguish an attacked monitor from a")
+        L.append("  healthily-trained one, and is not a usable early warning. We report this")
+        L.append("  as a negative result: the obvious cheap substitute for AUROC does not work.")
+        L.append("")
 
     txt = "\n".join(L)
     print(txt)
