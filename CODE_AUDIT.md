@@ -32,9 +32,11 @@ state, verified by re-reading the code:
 | B1 twelve deleted scripts | **mostly stale** — `probe_usefulness_suite.py`, `firstanswer_rloo.py` and `phase2a_per_answer_correctness.py` are back |
 | B2 README CLI examples wrong | **fixed** |
 | C1–C3 | **addressed in the paper** — `structural_baselines.py` now computes all of it and the numbers are in the deployment table, the noise floor, and Limitations |
-| C4, C5, C7, C8, C10–C12 | **open** — real, and none of them moves a headline number |
+| C4 thresholds selected on eval data | **fixed in the paper** — see the correction below; this row previously said "open, moves no headline number" and that was wrong |
+| C5, C7, C8, C10–C12 | **open** — checked against the current draft, and the paper quotes none of them |
 | C6 causal steering read too strongly | **resolved by withdrawal** — the section is cut |
 | C9 top-M at M/G effective lr | **fixed** — `--probe_topk_renormalize`, off by default so old runs reproduce |
+| A8 anonymiser identity list incomplete | **fixed 2026-08-13** — new; see A8 below |
 
 **One defect this audit missed**, found 2026-08-12: `surface_battery.py`
 compared the frozen model's score on the held-out prompt half against the true
@@ -47,6 +49,49 @@ past the `hidden_states[L]` the probe reads. This is the layer half of the
 off-by-one A4 covers the token half of, and it is why A4's note that the null
 was "measured one to three tokens away" understated the problem. Now
 `--layer_convention hidden_state` by default.
+
+### Correction to this audit's own C4 verdict (2026-08-13)
+
+This banner said C4 was open and moved no headline number. **That was wrong, and
+it is the second time a "does not affect a headline number" judgement in this
+file has failed.** Two of C4's three scripts supply figures the paper prints, and
+in both cases the script *already computes the held-out version and labels it*:
+
+```
+BEST (IN-SAMPLE, (B,T) maximised on these same prompts -- optimistic):
+  B=16, T=0.95: acc=0.6749, n_used=6.27
+BEST (HELD-OUT, 2-fold by prompt) -- report this:
+  acc=0.6675, n_used=5.54
+```
+
+The draft quoted the line above the one that says "report this."
+
+| figure | was quoted | corrected |
+|---|---|---|
+| probe-guided restart | 0.675 at 6.27 rollouts | **0.6675 at 5.54** |
+| within-rollout probe-commit | 0.6607 | **0.6601** |
+
+Both now use the held-out figures. Selective abstention is **not** affected — its
+threshold targets a *coverage* level, not the accuracy it reports, so it is not
+selected on the quantity it prints. Full write-up in `REVISION_PACK.md` §D2.
+
+**The generalisable lesson**, and it is the same one `followup/PAPER_NOTES.md`
+already drew: in this project the artifacts have been right and the prose has
+drifted from them. Twice now the producing script printed the correct value, in
+capital letters, next to the one that got transcribed. A
+regenerate-tables-from-artifacts step is worth more than any individual fix in
+this file.
+
+### One more, same class, found the same day
+
+`writeup_workshop.tex` asserted *"within-checkpoint cross-position cosines ≤ 0.10
+while cross-checkpoint within-position transfer AUROC stays ≥ 0.95."* Neither
+bound holds: the cosine is **0.1042** (`41_relabel_cosines.txt`), and transfer is
+**asymmetric** — 0.953 for C_SFT→C_outcome but **0.822** the other way
+(`40_relabel_cross_checkpoint.txt`). The sentence quoted the favourable direction
+of a two-sided quantity. Corrected; `REVISION_PACK.md` §D3. Note this is *not*
+C5 — C5 concerns leakage in the cross-*position* AUROC table, which the paper
+does not quote.
 
 ---
 
@@ -133,6 +178,39 @@ read the same JSON the text reads.
 ### A7. Dead constant
 `probe_guided_restart.py:41` defines `PAC = ".../per_answer_correctness.jsonl"` and never
 uses it. Harmless, but the producing script is also gone (see B1).
+
+### A8. The anonymiser's identity list matched the owner but not the repo — added 2026-08-13
+
+`scripts/make_submission_tex.py` builds the double-blind submission and gates it
+on a list of identity patterns, exiting non-zero if any survives. The list had
+`github\.com/Abraham-y` but no pattern for the repository *name*. So the check
+verified the owner path was gone and would have passed a document that still
+said `reader-writer-probe-rl` anywhere the URL rewrite did not reach.
+
+That is not hypothetical here. The repo has already been renamed once —
+`cs224r-project` → `reader-writer-probe-rl` — and the rename is what exposed it:
+GitHub announces it on push, the URL rewrite in the script was keyed to one
+spelling, and a future rename would produce exactly the surviving-string case the
+check was supposed to catch.
+
+**Severity is the point.** Every other item in this file costs accuracy. This one
+costs the submission: a de-anonymised double-blind paper is a desk reject, and it
+fails silently, at the one moment nobody re-reads the PDF. A gate whose failure
+mode is "passes when it should fail" is worse than no gate, because it is trusted.
+
+Fixed: both repository names are now patterns in their own right (13 checked, not
+11), with a comment saying why the name and not just the owner. The check also
+runs against the *rewritten* output rather than being trusted to have handled
+things, and the rendered PDF is scanned separately — extracted text and metadata
+both — because LaTeX can put an author string in `/Author` that no source grep
+would see.
+
+**Related, and worth stating because I got it backwards once:** the URL in the
+paper was never dead. `cs224r-project` redirects to the new name, so both resolve;
+the *canonical* one is `reader-writer-probe-rl`, which is what the paper had
+originally and what it has again. A redirect is not a broken link, and "this link
+404s" should be checked by following it rather than by comparing it against a
+stale `git remote`.
 
 ---
 
