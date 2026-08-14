@@ -21,6 +21,25 @@ The ~40-step lag -- recomputed from the parquet metric store
   CLAIM 2  drop by step 50: 0.762 -> 0.679 (-0.083)
            largest step-to-step move while flat: 0.020; the drop is 4.1x that
 
+  BALANCED variant (varies by seed; the reportable error bar)
+   step  seed0  seed1  seed2     mean
+      0  0.7854  0.7970  0.7991   0.7938
+     10  0.7684  0.7680  0.7660   0.7674
+     20  0.7790  0.7902  0.8076   0.7923
+     30  0.7660  0.7937  0.8039   0.7879
+     40  0.7671  0.7720  0.7669   0.7687
+     50  0.7081  0.6712  0.6811   0.6868
+     60  0.6463  0.6768  0.6391   0.6541
+     70  0.5408  0.5522  0.5775   0.5569
+     80  0.5717  0.5742  0.5102   0.5520
+     90  0.6205  0.6174  0.6139   0.6173
+     99  0.5325  0.5617  0.5677   0.5540
+
+    seed 0: flat-region span 0.019, step-40->50 drop 0.058  [ok]
+    seed 1: flat-region span 0.029, step-40->50 drop 0.097  [ok]
+    seed 2: flat-region span 0.042, step-40->50 drop 0.085  [ok]
+
+
 ### vanilla RLOO (control)   seeds=[0, 1, 2]   IDENTICAL: [(0, 1), (0, 2), (1, 2)]
 
    step            auroc_frozen   probe score    true acc

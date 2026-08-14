@@ -19,12 +19,17 @@ Two things the single-seed CSV hid, both found by writing this:
      Seeds 0 and 2 peak at step 20, and across seeds steps 20 and 30 are tied
      (0.795 vs 0.793). The robust statement is that AUROC is FLAT through step
      40 -- which is all the lag argument needs. The peak flourish is dropped.
-  2. Seeds 0 and 2 are bit-identical at every step. `auroc_frozen` is the
-     unbalanced variant, which PAPER_NOTES records as exactly reproducible, so
-     agreement is expected -- but it means the effective number of distinct
-     analyses is 2, not 3, and any "three seeds" phrasing overstates it. What
-     the seeds bound is analysis/subsample noise, never training variance:
-     there is one RL run behind all of them.
+  2. All three seeds are bit-identical on `auroc_frozen`. That is the unbalanced
+     variant, which PAPER_NOTES records as exactly reproducible, so agreement is
+     expected -- but it means that metric carries no error bar at all, and
+     "three seeds" said of it would be empty. `auroc_frozen_balanced` DOES vary
+     (the subsample differs per seed), so the paper reports that one with its
+     across-seed spread, and this script checks the lag survives in each seed
+     independently rather than only in the mean.
+
+     What the seeds bound either way is analysis noise. They are three analyses
+     of ONE RL run, so nothing here speaks to training variance, and the paper
+     must not imply otherwise.
 
     python followup/experiments/fragility/phase0_replicate/verify_lag_result.py
 
@@ -51,11 +56,14 @@ RUNS = {
     "vanilla RLOO (control)": "vanilla_rloo_ladder",
 }
 
-METRICS = ["auroc_frozen", "probe_score_mean", "verifier_acc"]
+METRICS = ["auroc_frozen", "auroc_frozen_balanced", "probe_score_mean", "verifier_acc"]
 
 # What the paper prints, seed-aggregated. Checked, not trusted.
 PUBLISHED_RUNA_AUROC = {0: 0.787, 10: 0.772, 20: 0.792, 30: 0.782, 40: 0.762,
                         50: 0.679, 60: 0.648, 70: 0.570, 99: 0.550}
+# The balanced means the paper prints, alongside their across-seed intervals.
+PUBLISHED_RUNA_BALANCED = {0: 0.794, 10: 0.767, 20: 0.792, 30: 0.788, 40: 0.769,
+                           50: 0.687, 70: 0.557, 99: 0.554}
 FLAT_THROUGH = 40      # last step the monitor is claimed to be intact
 DROP_AT = 50           # first step the claim says it moves
 
@@ -102,6 +110,7 @@ def main() -> None:
             continue
 
         auroc = table(d, "auroc_frozen")
+        bal = table(d, "auroc_frozen_balanced")
         seeds = list(auroc.columns)
         dup = [(a, b) for i, a in enumerate(seeds) for b in seeds[i + 1:]
                if auroc[a].equals(auroc[b])]
@@ -154,6 +163,42 @@ def main() -> None:
                     f"drop at {DROP_AT} ({min(flat) - drop:.3f}) is under 3x the largest "
                     f"step-to-step move in the flat region ({wobble:.3f}); the lag is not "
                     "cleanly separable from the wobble")
+            if not bal.empty:
+                L.append("")
+                L.append("  BALANCED variant (varies by seed; the reportable error bar)")
+                L.append(f"  {'step':>5}  " + "  ".join(f'seed{int(c)}' for c in bal.columns)
+                         + f"  {'mean':>7}")
+                for step in bal.index:
+                    r = bal.loc[step]
+                    L.append(f"  {int(step):>5}  " + "  ".join(f'{r[c]:.4f}' for c in bal.columns)
+                             + f"  {r.mean():>7.4f}")
+                per_seed = {}
+                for c in bal.columns:
+                    f_ = [bal.loc[s_, c] for s_ in bal.index if s_ <= FLAT_THROUGH]
+                    d_ = bal.loc[DROP_AT, c]
+                    per_seed[int(c)] = (min(f_) - d_, max(f_) - min(f_))
+                L.append("")
+                for c, (drop_c, span_c) in per_seed.items():
+                    ok = "ok" if drop_c > span_c else "FAILS"
+                    L.append(f"    seed {c}: flat-region span {span_c:.3f}, "
+                             f"step-{FLAT_THROUGH}->{DROP_AT} drop {drop_c:.3f}  [{ok}]")
+                bad = [c for c, (dc, sc) in per_seed.items() if dc <= sc]
+                if bad:
+                    failures.append(
+                        f"balanced variant: the lag does not survive in seed(s) {bad} "
+                        "-- it exists only after averaging, which is not a result")
+                out["runs"].setdefault(label, {})["balanced_per_seed"] = {
+                    str(c): {"drop": float(dc), "flat_span": float(sc)}
+                    for c, (dc, sc) in per_seed.items()}
+                L.append("")
+
+            for step, want in PUBLISHED_RUNA_BALANCED.items():
+                if step not in bal.index:
+                    failures.append(f"balanced step {step} missing from the store"); continue
+                got_b = float(bal.loc[step].mean())
+                if abs(got_b - want) > 0.001:
+                    failures.append(f"balanced step {step}: paper prints {want:.3f}, "
+                                    f"store gives {got_b:.3f}")
             for step, want in PUBLISHED_RUNA_AUROC.items():
                 got = rows.get(step, {}).get("auroc_mean")
                 if got is None:
