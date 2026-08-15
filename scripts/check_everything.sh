@@ -41,6 +41,13 @@ run "pre-registered arms A/B + output shape" \
     python -W ignore extension/probe/verify_residual_arms.py
 run "the 40-step lag + scope condition" \
     python followup/experiments/fragility/phase0_replicate/verify_lag_result.py
+# Needs the cached activations under followup/acts/ (gitignored, ~56 MB/checkpoint).
+if [ -d followup/acts/phase0_harvest_runA/50 ]; then
+  run "change-point test (prompt-clustered)" \
+      python -W ignore followup/experiments/fragility/phase0_replicate/changepoint_lag.py --n_boot 500
+else
+  printf '%-46s%s\n' "change-point test (prompt-clustered)" "SKIP (acts not cached)"
+fi
 
 echo
 echo "=== submission: is the thing you are about to upload safe? ==="
