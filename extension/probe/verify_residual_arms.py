@@ -74,31 +74,61 @@ PUBLISHED_BASELINE_LEN = 1098.0   # C_SFT, same clean-406 population
 DEFAULT_ARMS = [
     ("C_outcome (verifier RL)", "eval_c_outcome_FIXEDSTOP_n500.json"),
     ("published probe-as-reward", "eval_runA_postRL_n500.json"),
+    ("runB, probe-as-reward from C_SFT", "eval_runB_postRL_n500.json"),
     ("Arm A, surface-residualised", "eval_armA_residual_step100.json"),
     ("Arm B, surface-only", "eval_armB_surface_step100.json"),
 ]
 
-# The contrasts REVISION_PACK G4/G5 report, as (treatment, reference).
+# INITIALISATION MATTERS MORE THAN THE TREATMENT, so the contrast must match on
+# it. Both arms were launched from asingh15/qwen-sft-countdown-defaultproj
+# (= C_SFT; see HANDOFF.md and PREREGISTRATION.md). The "published
+# probe-as-reward" run the pack compared them against is runA, which was
+# initialised from C_outcome. That is a cross-initialisation comparison, and the
+# paper's own numbers show initialisation is worth ~16 pp on its own: the SAME
+# raw-probe reward gives 0.2361 from C_outcome (runA) and 0.0734 from C_SFT
+# (runB). That is more than twice the effect being attributed to the treatment.
+#
+# The init-matched reference for both arms is therefore runB, and it reverses the
+# Arm A conclusion:
+#
+#     Arm A - runA (cross-init)  =  -6.83 pp  -> "prediction falsified"
+#     Arm A - runB (init-matched) = +9.44 pp  -> prediction CONFIRMED
+#
+# The pre-registration's reference row said only "the published run", which did
+# not disambiguate runA from runB; both used the same 0.978 probe. The ambiguity
+# is what let the wrong comparison through. Both are computed below and labelled,
+# and the init-matched one is the one to report.
 CONTRASTS = [
+    ("Arm A, surface-residualised", "runB, probe-as-reward from C_SFT"),
     ("Arm A, surface-residualised", "published probe-as-reward"),
-    ("Arm A, surface-residualised", "C_outcome (verifier RL)"),
+    ("Arm B, surface-only", "runB, probe-as-reward from C_SFT"),
     ("Arm B, surface-only", "published probe-as-reward"),
-    ("Arm B, surface-only", "C_outcome (verifier RL)"),
 ]
+
+# Which checkpoint each row was initialised from, so the script can say out loud
+# when a contrast crosses initialisations.
+INIT = {
+    "C_outcome (verifier RL)": "C_SFT",
+    "published probe-as-reward": "C_outcome",
+    "runB, probe-as-reward from C_SFT": "C_SFT",
+    "Arm A, surface-residualised": "C_SFT",
+    "Arm B, surface-only": "C_SFT",
+}
 
 # What the pack currently prints, so a drift shows up as a diff rather than as a
 # number nobody rechecks. pp for deltas, absolute for accuracies.
 PUBLISHED = {
     "C_outcome (verifier RL)": 0.5306,
+    "runB, probe-as-reward from C_SFT": 0.0734,
     "published probe-as-reward": 0.2361,
     "Arm A, surface-residualised": 0.1678,
     "Arm B, surface-only": 0.0000,
 }
 PUBLISHED_CONTRASTS = {
-    ("Arm A, surface-residualised", "published probe-as-reward"): (-6.83, -8.85, -4.79),
-    ("Arm A, surface-residualised", "C_outcome (verifier RL)"): (-36.28, -39.36, -33.19),
-    ("Arm B, surface-only", "published probe-as-reward"): (-23.61, -26.43, -20.89),
-    ("Arm B, surface-only", "C_outcome (verifier RL)"): (-53.06, -57.04, -48.97),
+    ("Arm A, surface-residualised", "runB, probe-as-reward from C_SFT"): (9.44, 7.67, 11.24),
+    ("Arm A, surface-residualised", "published probe-as-reward"): (-6.83, -8.90, -4.83),
+    ("Arm B, surface-only", "runB, probe-as-reward from C_SFT"): (-7.34, -8.41, -6.31),
+    ("Arm B, surface-only", "published probe-as-reward"): (-23.61, -26.36, -20.95),
 }
 
 
@@ -262,10 +292,12 @@ def main() -> None:
             continue
         d, lo, hi = paired_bootstrap(arms[treat], arms[ref], args.n_boot, args.seed)
         pub = PUBLISHED_CONTRASTS.get((treat, ref))
+        cross = INIT.get(treat) != INIT.get(ref)
         flag = ""
         if pub is not None:
             flag = "  ok" if abs(d - pub[0]) < 0.05 else "  DIFF"
-        L.append(f"  {treat + ' - ' + ref:56s}{d:>+10.2f}   [{lo:+7.2f}, {hi:+7.2f}]{flag}")
+        tag = "  CROSS-INIT, do not report" if cross else "  init-matched"
+        L.append(f"  {treat + ' - ' + ref:56s}{d:>+10.2f}   [{lo:+7.2f}, {hi:+7.2f}]{flag}{tag}")
         if pub is not None:
             L.append(f"  {'  published:':56s}{pub[0]:>+10.2f}   [{pub[1]:+7.2f}, {pub[2]:+7.2f}]")
         contrasts[f"{treat} - {ref}"] = {

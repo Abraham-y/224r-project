@@ -2,29 +2,29 @@ Change-point in the monitor's AUROC series
   run phase0_harvest_runA, layer 16, 11 checkpoints: [0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 99]
   frozen probe: probe_pipeline_C_outcome_l16_pre_answer_temp1.pkl
   label rule: last_block (the probe's own training convention)
-  prompt-clustered bootstrap, 500 resamples, seed 0
+  prompt-clustered bootstrap, 2000 resamples, seed 0
 
     step    AUROC     95% CI (prompt-clustered)
   ----------------------------------------------
-       0    0.783     [0.758, 0.804]
-      10    0.777     [0.752, 0.798]
+       0    0.783     [0.760, 0.804]
+      10    0.777     [0.753, 0.801]
       20    0.778     [0.753, 0.801]
-      30    0.769     [0.746, 0.790]
-      40    0.768     [0.749, 0.788]
-      50    0.696     [0.673, 0.718]
-      60    0.620     [0.594, 0.646]
-      70    0.579     [0.549, 0.610]
-      80    0.576     [0.546, 0.607]
-      90    0.615     [0.585, 0.645]
-      99    0.562     [0.533, 0.588]
+      30    0.769     [0.746, 0.791]
+      40    0.768     [0.748, 0.790]
+      50    0.696     [0.673, 0.719]
+      60    0.620     [0.592, 0.647]
+      70    0.579     [0.548, 0.609]
+      80    0.576     [0.546, 0.608]
+      90    0.615     [0.584, 0.646]
+      99    0.562     [0.531, 0.594]
 
   point estimate: break after step 50 (between 50 and 60)
 
   bootstrap distribution of the change-point:
-    break after step  50:  89.4%
-    break after step  40:  10.6%
+    break after step  50:  90.4%
+    break after step  40:   9.6%
 
-  modal change-point: after step 50   (89.4% of resamples)
+  modal change-point: after step 50   (90.4% of resamples)
   95% bootstrap set: steps [40, 50]
 
   The change-point is well identified: a majority of resamples put the

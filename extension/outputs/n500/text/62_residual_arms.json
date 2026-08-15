@@ -18,6 +18,13 @@
       "first_block_acc": 0.23614532019704434,
       "published": 0.2361
     },
+    "runB, probe-as-reward from C_SFT": {
+      "path": "eval_runB_postRL_n500.json",
+      "n_prompts": 406,
+      "n_rollouts": 6496,
+      "first_block_acc": 0.07342980295566502,
+      "published": 0.0734
+    },
     "Arm A, surface-residualised": {
       "path": "eval_armA_residual_step100.json",
       "n_prompts": 406,
@@ -34,24 +41,34 @@
     }
   },
   "contrasts": {
+    "Arm A, surface-residualised - runB, probe-as-reward from C_SFT": {
+      "delta_pp": 9.436576354679802,
+      "ci_lo_pp": 7.666256157635468,
+      "ci_hi_pp": 11.23768472906404,
+      "published": {
+        "delta_pp": 9.44,
+        "ci_lo_pp": 7.67,
+        "ci_hi_pp": 11.24
+      }
+    },
     "Arm A, surface-residualised - published probe-as-reward": {
       "delta_pp": -6.83497536945813,
       "ci_lo_pp": -8.89778325123153,
       "ci_hi_pp": -4.833743842364532,
       "published": {
         "delta_pp": -6.83,
-        "ci_lo_pp": -8.85,
-        "ci_hi_pp": -4.79
+        "ci_lo_pp": -8.9,
+        "ci_hi_pp": -4.83
       }
     },
-    "Arm A, surface-residualised - C_outcome (verifier RL)": {
-      "delta_pp": -36.283866995073886,
-      "ci_lo_pp": -39.331896551724135,
-      "ci_hi_pp": -33.282019704433495,
+    "Arm B, surface-only - runB, probe-as-reward from C_SFT": {
+      "delta_pp": -7.342980295566502,
+      "ci_lo_pp": -8.405172413793103,
+      "ci_hi_pp": -6.3115763546798025,
       "published": {
-        "delta_pp": -36.28,
-        "ci_lo_pp": -39.36,
-        "ci_hi_pp": -33.19
+        "delta_pp": -7.34,
+        "ci_lo_pp": -8.41,
+        "ci_hi_pp": -6.31
       }
     },
     "Arm B, surface-only - published probe-as-reward": {
@@ -60,18 +77,8 @@
       "ci_hi_pp": -20.951354679802954,
       "published": {
         "delta_pp": -23.61,
-        "ci_lo_pp": -26.43,
-        "ci_hi_pp": -20.89
-      }
-    },
-    "Arm B, surface-only - C_outcome (verifier RL)": {
-      "delta_pp": -53.0634236453202,
-      "ci_lo_pp": -57.06588669950739,
-      "ci_hi_pp": -49.04556650246305,
-      "published": {
-        "delta_pp": -53.06,
-        "ci_lo_pp": -57.04,
-        "ci_hi_pp": -48.97
+        "ci_lo_pp": -26.36,
+        "ci_hi_pp": -20.95
       }
     }
   }
