@@ -165,13 +165,40 @@ def main() -> None:
         if np.isfinite(row).all():
             kdist[best_changepoint(row) - 1] += 1
 
-    L.append(f"  {'step':>6}{'AUROC':>9}{'95% CI (prompt-clustered)':>30}")
+    # WHICH METRIC WARNS YOU. AUROC is rank-based and therefore invariant to any
+    # monotone recalibration of the score. Steps 0-40 are close to exactly that:
+    # the score inflates 0.460 -> 0.677 while largely preserving the correct/
+    # incorrect ordering, which AUROC is built not to see. So "AUROC stayed flat"
+    # is partly a property of the metric, and the useful question is which metric
+    # is NOT invariant. Precision at a numerically frozen threshold is not: it
+    # moves an order of magnitude more over the same span, and it needs no
+    # ground truth at deployment beyond the labels you already used to set it.
+    thr = float(np.quantile(data[used[0]][0], 0.5))
+    L.append(f"  operating threshold frozen at step {used[0]} (median score) = {thr:.4f}")
+    L.append("")
+    L.append(f"  {'step':>6}{'AUROC':>9}{'prec@thr':>10}{'flag rate':>11}"
+             f"{'95% CI (AUROC, prompt-clustered)':>34}")
     L.append("  " + "-" * 46)
     per = {}
     for i, s in enumerate(used):
         lo, hi = np.nanpercentile(boot[:, i], [2.5, 97.5])
-        L.append(f"  {s:>6}{point[i]:>9.3f}     [{lo:.3f}, {hi:.3f}]")
-        per[int(s)] = {"auroc": float(point[i]), "ci_lo": float(lo), "ci_hi": float(hi)}
+        sc, yy, _ = data[s]
+        m = sc >= thr
+        prec = float(yy[m].mean()) if m.any() else float("nan")
+        L.append(f"  {s:>6}{point[i]:>9.3f}{prec:>10.3f}{float(m.mean()):>11.3f}"
+                 f"       [{lo:.3f}, {hi:.3f}]")
+        per[int(s)] = {"auroc": float(point[i]), "ci_lo": float(lo), "ci_hi": float(hi),
+                       "precision_at_frozen_thr": prec, "flag_rate": float(m.mean())}
+    L.append("")
+
+    a0, a4 = per[used[0]]["auroc"], per[40]["auroc"] if 40 in per else per[used[4]]["auroc"]
+    p0, p4 = (per[used[0]]["precision_at_frozen_thr"],
+              per[40]["precision_at_frozen_thr"] if 40 in per else
+              per[used[4]]["precision_at_frozen_thr"])
+    L.append(f"  over steps {used[0]}-40, AUROC moves {100*(a4-a0)/a0:+.1f}% while precision at")
+    L.append(f"  the frozen threshold moves {100*(p4-p0)/p0:+.1f}% -- a factor of "
+             f"{abs((p4-p0)/p0) / abs((a4-a0)/a0):.0f}.")
+    L.append("  The warning is available; it is just not in the metric usually watched.")
     L.append("")
 
     k_hat = best_changepoint(point)
