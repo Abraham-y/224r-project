@@ -171,9 +171,29 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--final", action="store_true",
                     help="camera-ready: de-anonymise and pass [final] to the style")
+    ap.add_argument("--check", metavar="TEX",
+                    help="do not generate anything: just run the anonymity scan over "
+                         "an existing .tex (use this on the file you actually submit)")
     ap.add_argument("--src", default=SRC)
     ap.add_argument("--out", default=OUT)
     args = ap.parse_args()
+
+    # The submission that goes to JUDGe (writeup_judge.tex) was cut down by hand
+    # rather than produced by this generator, so nothing was scanning it. A
+    # generator that only vets its own output leaves the actual artifact ungated,
+    # which is the same shape of gap as A8 in CODE_AUDIT.md. --check closes it.
+    if args.check:
+        text = open(args.check).read()
+        hits = check_anonymous(text)
+        print(f"anonymity scan of {os.path.relpath(args.check, _ROOT)} "
+              f"against {len(IDENTITY_PATTERNS)} patterns")
+        if hits:
+            print("\nFAILED -- these survived:", file=sys.stderr)
+            for h in hits:
+                print("  " + h, file=sys.stderr)
+            sys.exit(1)
+        print("clean")
+        return
 
     src = open(args.src).read()
     body = strip_preamble(src)
