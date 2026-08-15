@@ -58,6 +58,17 @@ if _REPO_ROOT not in sys.path:
 from evaluation.countdown import evaluate_equation, validate_equation  # noqa: E402
 
 _ANSWER_RE = re.compile(r"<answer>(.*?)</answer>", re.S)
+_THINK_CLOSE = "</think>"
+
+# Arm B's qualitative claims, which the paper quotes and which were previously
+# computed in an ad-hoc session with no script behind them -- the exact failure
+# mode this project keeps producing. Gated here.
+PUBLISHED_ARMB_SHAPE = {
+    "frac_emits_think_close": 1.000,
+    "frac_emits_answer": 0.999,
+    "mean_len_chars": 2390.0,
+}
+PUBLISHED_BASELINE_LEN = 1098.0   # C_SFT, same clean-406 population
 
 # label -> (path, what it is). The reference rows are the ones the pack quotes.
 DEFAULT_ARMS = [
@@ -136,6 +147,35 @@ def load_arm(path: str, keep: set[int] | None) -> dict[int, np.ndarray]:
     return {k: np.asarray(v, float) for k, v in per.items()}
 
 
+def shape_stats(path: str, keep: set[int] | None) -> dict:
+    """Structural properties of the rollouts, independent of correctness.
+
+    Arm B's result is only interesting because the output is NOT degenerate: the
+    policy still emits well-formed traces and answer blocks, and simply fills the
+    answer with prose. That claim needs its own numbers, on the same population
+    as the accuracies, and it did not have them.
+    """
+    full = os.path.join(_REPO_ROOT, path)
+    if not os.path.exists(full):
+        return {}
+    n = think = ans = 0
+    lens: list[int] = []
+    with open(full) as f:
+        for p, line in enumerate(l for l in f if l.strip()):
+            if keep is not None and p not in keep:
+                continue
+            for r in json.loads(line)["response"]:
+                n += 1
+                lens.append(len(r))
+                think += _THINK_CLOSE in r
+                ans += bool(_ANSWER_RE.search(r))
+    if not n:
+        return {}
+    return {"n_rollouts": n, "frac_emits_think_close": think / n,
+            "frac_emits_answer": ans / n,
+            "mean_len_chars": float(np.mean(lens))}
+
+
 def paired_bootstrap(a: dict[int, np.ndarray], b: dict[int, np.ndarray],
                      n_boot: int, seed: int) -> tuple[float, float, float]:
     """Delta in pp, with a prompt-clustered paired bootstrap CI.
@@ -169,6 +209,7 @@ def main() -> None:
     args = ap.parse_args()
 
     keep = clean_prompts()
+    failures: list[str] = []
     L = [
         "Pre-registered RL arms -- recomputed from the rollout JSONs",
         f"  population: clean-406 ({len(keep) if keep else 'ALL'} prompts), "
@@ -237,6 +278,43 @@ def main() -> None:
     L.append("  the published run. It collapsed more, outside the interval. That is a")
     L.append("  falsified prediction and is reported as one.")
 
+    # --- Arm B is only interesting if the output is not degenerate -----------
+    L.append("")
+    L.append("### Arm B output shape (why the failure is informative, not degenerate)")
+    L.append("")
+    L.append(f"  {'population':<34}{'n':>7}{'</think>':>10}{'<answer>':>10}{'mean chars':>12}")
+    L.append("  " + "-" * 73)
+    shapes = {}
+    for label, path in [("C_SFT baseline", "eval_c_sft_FIXEDSTOP_n500.json"),
+                        ("Arm B, surface-only", "eval_armB_surface_step100.json")]:
+        st = shape_stats(path, keep)
+        if not st:
+            L.append(f"  {label:<34}  MISSING ({path})")
+            continue
+        shapes[label] = st
+        L.append(f"  {label:<34}{st['n_rollouts']:>7}"
+                 f"{st['frac_emits_think_close']:>10.3f}{st['frac_emits_answer']:>10.3f}"
+                 f"{st['mean_len_chars']:>12.0f}")
+    b = shapes.get("Arm B, surface-only")
+    if b:
+        L.append("")
+        for k, want in PUBLISHED_ARMB_SHAPE.items():
+            got = b[k]
+            tol = 1.0 if k == "mean_len_chars" else 0.001
+            ok = abs(got - want) <= tol
+            L.append(f"  {k:<26} paper {want:>8.3f}   store {got:>8.3f}   {'ok' if ok else 'DIFF'}")
+            if not ok:
+                failures.append(f"Arm B {k}: paper prints {want}, recomputed {got:.3f}")
+        base = shapes.get("C_SFT baseline", {}).get("mean_len_chars")
+        if base is not None and abs(base - PUBLISHED_BASELINE_LEN) > 1.0:
+            failures.append(f"baseline mean length: paper prints {PUBLISHED_BASELINE_LEN}, "
+                            f"recomputed {base:.0f}")
+        L.append("")
+        L.append("  The point: near-100% well-formed output means the reward did not")
+        L.append("  simply break generation. The answer block is present and contains")
+        L.append("  reasoning prose where an equation belongs.")
+    L.append("")
+
     txt = "\n".join(L)
     print(txt)
     out = os.path.join(_REPO_ROOT, args.out)
@@ -247,6 +325,11 @@ def main() -> None:
         json.dump({"population": "clean-406", "label_rule": "first_block",
                    "n_boot": args.n_boot, "seed": args.seed,
                    "arms": results, "contrasts": contrasts}, f, indent=2)
+    if failures:
+        print("\nFAILED -- the paper and the recomputation disagree:", file=sys.stderr)
+        for x in failures:
+            print("  " + x, file=sys.stderr)
+        sys.exit(1)
     print(f"\nwrote {args.out}")
 
 

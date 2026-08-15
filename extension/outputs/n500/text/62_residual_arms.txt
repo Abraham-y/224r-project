@@ -28,3 +28,19 @@ Pre-registered RL arms -- recomputed from the rollout JSONs
   Arm A's pre-registered prediction was that it would collapse LESS than
   the published run. It collapsed more, outside the interval. That is a
   falsified prediction and is reported as one.
+
+### Arm B output shape (why the failure is informative, not degenerate)
+
+  population                              n  </think>  <answer>  mean chars
+  -------------------------------------------------------------------------
+  C_SFT baseline                       6496     0.976     0.971        1098
+  Arm B, surface-only                  3248     1.000     0.999        2390
+
+  frac_emits_think_close     paper    1.000   store    1.000   ok
+  frac_emits_answer          paper    0.999   store    0.999   ok
+  mean_len_chars             paper 2390.000   store 2389.869   ok
+
+  The point: near-100% well-formed output means the reward did not
+  simply break generation. The answer block is present and contains
+  reasoning prose where an equation belongs.
+

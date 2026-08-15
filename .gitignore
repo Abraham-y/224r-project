@@ -95,3 +95,6 @@ sft_aug_sanity.json
 # Generated submission artifacts (rebuild: python scripts/make_submission_tex.py)
 writeup_workshop_submission.tex
 writeup_workshop_submission.pdf
+
+# Private paper variants (same rule as writeup_workshop.md)
+writeup_workshop_full.md
