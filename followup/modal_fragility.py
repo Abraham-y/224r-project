@@ -152,6 +152,14 @@ def run_residual_rl(args: list[str]) -> str:
 
 
 @app.function(**_GPU_KW)
+def run_judge_ladder(args: list[str]) -> str:
+    """Re-sample an existing checkpoint ladder and score every rollout with an
+    LLM judge, so the lag measurement can be made about a judge rather than a
+    linear probe. No training: this reads checkpoints that already exist."""
+    return _run("experiments/fragility/judge_lag/score_ladder_with_judge.py", args)
+
+
+@app.function(**_GPU_KW)
 def run_eval_local(args: list[str]) -> str:
     """Eval a checkpoint on the paper's local 500-prompt file (forked harness)."""
     return _run("experiments/fragility/residual_probe/countdown_eval_local.py", args)
@@ -170,6 +178,7 @@ _TARGETS = {
     "patching": run_patching,
     "dense_probe_rloo": run_dense_probe_rloo,
     "residual_rl": run_residual_rl,
+    "judge_ladder": run_judge_ladder,
     "eval_local": run_eval_local,
     "analyse": run_analyse,
 }
