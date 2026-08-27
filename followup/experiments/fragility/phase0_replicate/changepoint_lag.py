@@ -165,7 +165,15 @@ def main() -> None:
         if np.isfinite(row).all():
             kdist[best_changepoint(row) - 1] += 1
 
-    # WHICH METRIC WARNS YOU. AUROC is rank-based and therefore invariant to any
+    # WHICH METRIC WARNS YOU -- CORRECTED. An earlier version of this block
+    # reported raw precision at a frozen threshold falling 29% against AUROC's
+    # 1.9% and called it "a factor of 16". That comparison is invalid twice over:
+    # raw precision is confounded with the base rate (which itself falls over the
+    # ladder), and a percent change in AUROC is measured from an origin of 0 when
+    # the floor is 0.5. Both corrections are applied below. flag_rate is the one
+    # statistic here that needs NO ground truth, and it moves most.
+    #
+    # AUROC is rank-based and therefore invariant to any
     # monotone recalibration of the score. Steps 0-40 are close to exactly that:
     # the score inflates 0.460 -> 0.677 while largely preserving the correct/
     # incorrect ordering, which AUROC is built not to see. So "AUROC stayed flat"
@@ -176,29 +184,48 @@ def main() -> None:
     thr = float(np.quantile(data[used[0]][0], 0.5))
     L.append(f"  operating threshold frozen at step {used[0]} (median score) = {thr:.4f}")
     L.append("")
-    L.append(f"  {'step':>6}{'AUROC':>9}{'prec@thr':>10}{'flag rate':>11}"
-             f"{'95% CI (AUROC, prompt-clustered)':>34}")
+    L.append(f"  {'step':>6}{'AUROC':>9}{'prec@T':>9}{'base':>8}{'LIFT':>8}"
+             f"{'flagrate':>10}{'95% CI (AUROC)':>22}")
     L.append("  " + "-" * 46)
     per = {}
     for i, s in enumerate(used):
         lo, hi = np.nanpercentile(boot[:, i], [2.5, 97.5])
         sc, yy, _ = data[s]
         m = sc >= thr
+        base = float(yy.mean())
         prec = float(yy[m].mean()) if m.any() else float("nan")
-        L.append(f"  {s:>6}{point[i]:>9.3f}{prec:>10.3f}{float(m.mean()):>11.3f}"
-                 f"       [{lo:.3f}, {hi:.3f}]")
+        lift = prec / base if base > 0 else float("nan")
+        L.append(f"  {s:>6}{point[i]:>9.3f}{prec:>9.3f}{base:>8.3f}{lift:>8.3f}"
+                 f"{float(m.mean()):>10.3f}      [{lo:.3f}, {hi:.3f}]")
         per[int(s)] = {"auroc": float(point[i]), "ci_lo": float(lo), "ci_hi": float(hi),
-                       "precision_at_frozen_thr": prec, "flag_rate": float(m.mean())}
+                       "precision_at_frozen_thr": prec, "flag_rate": float(m.mean()),
+                       "base_rate": base, "lift": lift}
     L.append("")
 
     a0, a4 = per[used[0]]["auroc"], per[40]["auroc"] if 40 in per else per[used[4]]["auroc"]
     p0, p4 = (per[used[0]]["precision_at_frozen_thr"],
               per[40]["precision_at_frozen_thr"] if 40 in per else
               per[used[4]]["precision_at_frozen_thr"])
-    L.append(f"  over steps {used[0]}-40, AUROC moves {100*(a4-a0)/a0:+.1f}% while precision at")
-    L.append(f"  the frozen threshold moves {100*(p4-p0)/p0:+.1f}% -- a factor of "
-             f"{abs((p4-p0)/p0) / abs((a4-a0)/a0):.0f}.")
-    L.append("  The warning is available; it is just not in the metric usually watched.")
+    k40 = 40 if 40 in per else used[4]
+    l0, l4 = per[used[0]]["lift"], per[k40]["lift"]
+    f0, f4 = per[used[0]]["flag_rate"], per[k40]["flag_rate"]
+    # AUROC's floor is 0.5, so measure its movement as a fraction of the
+    # above-chance margin rather than of the raw value.
+    e0, e4 = a0 - 0.5, a4 - 0.5
+    L.append(f"  over steps {used[0]}-{k40}:")
+    L.append(f"    AUROC                 {a0:.3f} -> {a4:.3f}   "
+             f"({100*(e4-e0)/e0:+.1f}% of the above-chance margin)")
+    L.append(f"    precision @ frozen T  {p0:.3f} -> {p4:.3f}   "
+             f"({100*(p4-p0)/p0:+.1f}%) -- CONFOUNDED with the base rate")
+    L.append(f"    lift (prec / base)    {l0:.3f} -> {l4:.3f}   "
+             f"({100*(l4-l0)/l0:+.1f}%) -- prevalence removed")
+    L.append(f"    flag rate             {f0:.3f} -> {f4:.3f}   "
+             f"({100*(f4-f0)/f0:+.1f}%) -- NEEDS NO LABELS")
+    L.append("")
+    L.append("  The prevalence-adjusted operating point does degrade here (unlike the")
+    L.append("  judge's), but by ~13%, not the ~29% raw precision suggests. The statistic")
+    L.append("  that moves most, and the only one available without ground truth, is the")
+    L.append("  flag rate.")
     L.append("")
 
     k_hat = best_changepoint(point)

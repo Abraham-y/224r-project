@@ -71,6 +71,33 @@ def auroc(y, s) -> float:
     return roc_auc_score(y, s) if len(np.unique(y)) > 1 else float("nan")
 
 
+def operating_point(y: np.ndarray, sc: np.ndarray, thr: float) -> dict:
+    """Operating-point stats at a frozen threshold, WITH prevalence removed.
+
+    Raw precision at a fixed threshold is confounded with the base rate: it falls
+    mechanically when prevalence falls, even with discrimination completely
+    unchanged. Over this ladder true accuracy roughly halves, so a precision
+    "collapse" is largely arithmetic. An earlier version of this analysis reported
+    the raw fall (-42.5%) as evidence the monitor degraded; it is not.
+
+    Two prevalence-invariant summaries instead:
+      lift = precision / base rate     -- enrichment of the flagged set
+      LR+  = TPR / FPR                 -- the likelihood ratio the threshold buys
+    Both are 1.0 for a useless monitor and are unchanged by a shift in prevalence
+    alone. flag_rate is kept because it needs NO labels at all.
+    """
+    m = sc >= thr
+    base = float(y.mean())
+    flag = float(m.mean())
+    prec = float(y[m].mean()) if m.any() else float("nan")
+    tpr = flag * prec / base if base > 0 else float("nan")
+    fpr = flag * (1 - prec) / (1 - base) if base < 1 else float("nan")
+    return {"precision": prec, "base_rate": base, "flag_rate": flag,
+            "lift": prec / base if base > 0 else float("nan"),
+            "tpr": tpr, "fpr": fpr,
+            "lr_pos": tpr / fpr if fpr and fpr > 0 else float("nan")}
+
+
 def best_changepoint(series: np.ndarray) -> int:
     n, best_k, best = len(series), 1, np.inf
     for k in range(1, n):
@@ -130,19 +157,21 @@ def main() -> None:
 
     L.append(f"  operating threshold frozen at step {steps[0]} (median judge score) = {thr:.4f}")
     L.append("")
-    L.append(f"  {'step':>6}{'judge AUROC':>13}{'prec@thr':>10}{'flag rate':>11}"
-             f"{'true acc':>10}{'95% CI':>20}")
-    L.append("  " + "-" * 72)
+    L.append(f"  {'step':>6}{'judge AUROC':>13}{'prec@T':>9}{'base':>8}{'LIFT':>8}"
+             f"{'LR+':>7}{'flagrate':>10}{'95% CI (AUROC)':>20}")
+    L.append("  " + "-" * 85)
     per = {}
     for i, s in enumerate(steps):
         lo, hi = np.nanpercentile(boot[:, i], [2.5, 97.5])
-        m = data[s]["s"] >= thr
-        prec = float(data[s]["y"][m].mean()) if m.any() else float("nan")
-        L.append(f"  {s:>6}{point[i]:>13.3f}{prec:>10.3f}{float(m.mean()):>11.3f}"
-                 f"{float(data[s]['y'].mean()):>10.3f}      [{lo:.3f}, {hi:.3f}]")
+        op = operating_point(data[s]["y"], data[s]["s"], thr)
+        L.append(f"  {s:>6}{point[i]:>13.3f}{op['precision']:>9.3f}{op['base_rate']:>8.3f}"
+                 f"{op['lift']:>8.3f}{op['lr_pos']:>7.2f}{op['flag_rate']:>10.3f}"
+                 f"      [{lo:.3f}, {hi:.3f}]")
         per[int(s)] = {"auroc": float(point[i]), "ci_lo": float(lo), "ci_hi": float(hi),
-                       "precision_at_frozen_thr": prec, "flag_rate": float(m.mean()),
-                       "true_acc": float(data[s]["y"].mean())}
+                       "precision_at_frozen_thr": op["precision"],
+                       "flag_rate": op["flag_rate"], "true_acc": op["base_rate"],
+                       "lift": op["lift"], "lr_pos": op["lr_pos"],
+                       "tpr": op["tpr"], "fpr": op["fpr"]}
     L.append("")
 
     k = best_changepoint(point)
@@ -181,19 +210,25 @@ def main() -> None:
         L.append(f"  probe break: after step {pj.get('changepoint_modal')}   "
                  f"judge: {'no identified break' if not identified else 'after step ' + str(steps[k-1])}")
         L.append("")
+        l0, l9 = per[steps[0]]["lift"], per[steps[-1]]["lift"]
+        r0, r9 = per[steps[0]]["lr_pos"], per[steps[-1]]["lr_pos"]
+        f0, f9 = per[steps[0]]["flag_rate"], per[steps[-1]]["flag_rate"]
         if not identified and overlap:
-            L.append("  THE JUDGE'S AUROC NEVER DEGRADES. First and last checkpoints are")
-            L.append(f"  {a0:.3f} [{lo0:.3f},{hi0:.3f}] and {a9:.3f} [{lo9:.3f},{hi9:.3f}] -- overlapping.")
-            L.append("  Its RANKING survives the whole collapse; the probe's does not.")
+            L.append("  The judge's AUROC does not move end-to-end: "
+                     f"{a0:.3f} [{lo0:.3f},{hi0:.3f}] -> {a9:.3f} [{lo9:.3f},{hi9:.3f}].")
             L.append("")
-            L.append(f"  But its precision at a frozen threshold falls {p0:.3f} -> {p9:.3f} "
-                     f"({100*(p9-p0)/p0:+.0f}%),")
-            L.append(f"  against an AUROC change of {100*(a9-a0)/a0:+.0f}%.")
-            L.append("  So AUROC is not a lagging indicator for this monitor -- it is a")
-            L.append("  NON-indicator. It would never have warned you at all, at any step,")
-            L.append("  while the fraction of flagged rollouts that are actually correct")
-            L.append("  nearly halved. That is a stronger form of the paper's claim than")
-            L.append("  the probe's 40-step lag, not a weaker one.")
+            L.append(f"  Raw precision at the frozen threshold falls {p0:.3f} -> {p9:.3f} "
+                     f"({100*(p9-p0)/p0:+.0f}%), but so does the base rate")
+            L.append(f"  ({per[steps[0]]['true_acc']:.3f} -> {per[steps[-1]]['true_acc']:.3f}). "
+                     "PREVALENCE-ADJUSTED the flagged set gets")
+            L.append(f"  MORE enriched, not less: lift {l0:.2f} -> {l9:.2f} "
+                     f"({100*(l9-l0)/l0:+.0f}%), LR+ {r0:.2f} -> {r9:.2f}.")
+            L.append("  So the precision fall is arithmetic, not evaluator failure. Do NOT")
+            L.append("  report it as the judge degrading.")
+            L.append("")
+            L.append(f"  What DOES move, and needs no labels at all: flag rate "
+                     f"{f0:.3f} -> {f9:.3f} ({100*(f9-f0)/f0:+.0f}%),")
+            L.append(f"  against an AUROC change of {100*(a9-a0)/a0:+.1f}%.")
         elif steps[k-1] < pj.get("changepoint_modal", 10**9):
             L.append("  The judge breaks EARLIER than the probe -- the better early warning.")
         else:

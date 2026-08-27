@@ -8,19 +8,19 @@ Does an LLM judge's AUROC lag too?
 
   operating threshold frozen at step 0 (median judge score) = 0.9991
 
-    step  judge AUROC  prec@thr  flag rate  true acc              95% CI
-  ------------------------------------------------------------------------
-       0        0.785     0.746      0.500     0.544      [0.757, 0.813]
-      10        0.784     0.703      0.481     0.495      [0.755, 0.812]
-      20        0.761     0.699      0.474     0.506      [0.729, 0.791]
-      30        0.754     0.679      0.465     0.488      [0.723, 0.783]
-      40        0.757     0.667      0.434     0.457      [0.726, 0.785]
-      50        0.778     0.631      0.373     0.399      [0.748, 0.806]
-      60        0.787     0.558      0.331     0.307      [0.757, 0.814]
-      70        0.790     0.524      0.304     0.268      [0.761, 0.818]
-      80        0.792     0.482      0.294     0.234      [0.761, 0.820]
-      90        0.775     0.448      0.312     0.232      [0.744, 0.806]
-      99        0.769     0.429      0.317     0.226      [0.737, 0.801]
+    step  judge AUROC   prec@T    base    LIFT    LR+  flagrate      95% CI (AUROC)
+  -------------------------------------------------------------------------------------
+       0        0.785    0.746   0.544   1.371   2.46     0.500      [0.757, 0.813]
+      10        0.784    0.703   0.495   1.420   2.41     0.481      [0.755, 0.812]
+      20        0.761    0.699   0.506   1.380   2.26     0.474      [0.729, 0.791]
+      30        0.754    0.679   0.488   1.392   2.22     0.465      [0.723, 0.783]
+      40        0.757    0.667   0.457   1.461   2.38     0.434      [0.726, 0.785]
+      50        0.778    0.631   0.399   1.582   2.58     0.373      [0.748, 0.806]
+      60        0.787    0.558   0.307   1.815   2.84     0.331      [0.757, 0.814]
+      70        0.790    0.524   0.268   1.956   3.01     0.304      [0.761, 0.818]
+      80        0.792    0.482   0.234   2.058   3.04     0.294      [0.761, 0.820]
+      90        0.775    0.448   0.232   1.929   2.68     0.312      [0.744, 0.806]
+      99        0.769    0.429   0.226   1.896   2.57     0.317      [0.737, 0.801]
 
   change-point: best split after step 40   (38.6% of resamples agree)
   NOT IDENTIFIED -- no location holds a majority. On this series the
@@ -43,15 +43,14 @@ Does an LLM judge's AUROC lag too?
 
   probe break: after step 50   judge: no identified break
 
-  THE JUDGE'S AUROC NEVER DEGRADES. First and last checkpoints are
-  0.785 [0.757,0.813] and 0.769 [0.737,0.801] -- overlapping.
-  Its RANKING survives the whole collapse; the probe's does not.
+  The judge's AUROC does not move end-to-end: 0.785 [0.757,0.813] -> 0.769 [0.737,0.801].
 
-  But its precision at a frozen threshold falls 0.746 -> 0.429 (-42%),
-  against an AUROC change of -2%.
-  So AUROC is not a lagging indicator for this monitor -- it is a
-  NON-indicator. It would never have warned you at all, at any step,
-  while the fraction of flagged rollouts that are actually correct
-  nearly halved. That is a stronger form of the paper's claim than
-  the probe's 40-step lag, not a weaker one.
+  Raw precision at the frozen threshold falls 0.746 -> 0.429 (-42%), but so does the base rate
+  (0.544 -> 0.226). PREVALENCE-ADJUSTED the flagged set gets
+  MORE enriched, not less: lift 1.37 -> 1.90 (+38%), LR+ 2.46 -> 2.57.
+  So the precision fall is arithmetic, not evaluator failure. Do NOT
+  report it as the judge degrading.
+
+  What DOES move, and needs no labels at all: flag rate 0.500 -> 0.317 (-37%),
+  against an AUROC change of -2.2%.
 
