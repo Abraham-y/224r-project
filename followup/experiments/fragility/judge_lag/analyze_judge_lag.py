@@ -98,6 +98,28 @@ def operating_point(y: np.ndarray, sc: np.ndarray, thr: float) -> dict:
             "lr_pos": tpr / fpr if fpr and fpr > 0 else float("nan")}
 
 
+def paired_auroc_diff(data, idx, prompts, a, b, n_boot, seed):
+    """AUROC(a) - AUROC(b) with a prompt-clustered PAIRED bootstrap.
+
+    Every checkpoint is scored on the SAME 406 prompts, so the checkpoints are
+    paired and the paired bootstrap is both the correct estimator and strictly
+    more powerful than comparing two marginal intervals. An earlier version of
+    this analysis concluded "the AUROC never degrades" from overlapping marginal
+    CIs; that is not a test of a difference, and the paired test contradicts it.
+    """
+    rng = np.random.default_rng(seed)
+    d = np.empty(n_boot)
+    for i in range(n_boot):
+        dr = rng.choice(prompts, size=len(prompts), replace=True)
+        ia = np.concatenate([idx[a][q] for q in dr])
+        ib = np.concatenate([idx[b][q] for q in dr])
+        d[i] = (auroc(data[a]["y"][ia], data[a]["s"][ia])
+                - auroc(data[b]["y"][ib], data[b]["s"][ib]))
+    lo, hi = np.percentile(d, [2.5, 97.5])
+    p = 2 * min((d < 0).mean(), (d > 0).mean())
+    return float(d.mean()), float(lo), float(hi), float(p)
+
+
 def best_changepoint(series: np.ndarray) -> int:
     n, best_k, best = len(series), 1, np.inf
     for k in range(1, n):
@@ -174,6 +196,34 @@ def main() -> None:
                        "tpr": op["tpr"], "fpr": op["fpr"]}
     L.append("")
 
+    # --- PAIRED tests, the estimator this comparison actually needs ----------
+    L.append("  PAIRED AUROC differences (prompt-clustered; the correct test for")
+    L.append("  checkpoints scored on the same prompts, unlike overlapping marginal CIs):")
+    L.append("")
+    L.append(f"    {'contrast':<26}{'delta':>9}{'95% CI':>22}{'p':>9}")
+    L.append("    " + "-" * 66)
+    pairs = [(steps[0], t) for t in steps[1:]] + [(30, 80)] if 30 in data and 80 in data \
+        else [(steps[0], t) for t in steps[1:]]
+    paired_out = {}
+    for a, b in pairs:
+        m_, lo_, hi_, p_ = paired_auroc_diff(data, idx, prompts, a, b,
+                                             args.n_boot, args.seed)
+        star = "  *" if p_ < 0.05 else ""
+        L.append(f"    step {a} - step {b:<15}{m_:>+9.4f}   [{lo_:+.4f},{hi_:+.4f}]{p_:>9.3f}{star}")
+        paired_out[f"{a}-{b}"] = {"delta": m_, "ci_lo": lo_, "ci_hi": hi_, "p": p_}
+    out_paired = paired_out
+    L.append("")
+    sig_down = [k for k, v in paired_out.items() if v["p"] < 0.05 and v["delta"] > 0]
+    sig_up = [k for k, v in paired_out.items() if v["p"] < 0.05 and v["delta"] < 0]
+    if sig_down:
+        L.append(f"  AUROC DOES degrade significantly: {', '.join(sig_down)}.")
+    if sig_up:
+        L.append(f"  ...and significantly RECOVERS: {', '.join(sig_up)}.")
+    if sig_down and sig_up:
+        L.append("  The series is non-monotone. Do not describe it as 'never degrades' --")
+        L.append("  that reads the least sensitive contrast (first vs last) off a U shape.")
+    L.append("")
+
     k = best_changepoint(point)
     share = kd.max() / max(kd.sum(), 1)
     # best_changepoint ALWAYS returns a k -- it fits the best two-segment split
@@ -243,6 +293,7 @@ def main() -> None:
         f.write(txt + "\n")
     with open(p.replace(".txt", ".json"), "w") as f:
         json.dump({"steps": steps, "frozen_threshold": thr, "per_step": per,
+                   "paired_auroc_diffs": out_paired,
                    "changepoint": int(steps[k-1])}, f, indent=2)
     print(f"\nwrote {args.out}")
 

@@ -31,6 +31,23 @@ Change-point in the monitor's AUROC series
   that moves most, and the only one available without ground truth, is the
   flag rate.
 
+  PAIRED AUROC differences (prompt-clustered, same prompts each side):
+
+    contrast                      delta                95% CI        p
+    ------------------------------------------------------------------
+    step 0 - step 10               +0.0051   [-0.0149,+0.0249]    0.627
+    step 0 - step 20               +0.0058   [-0.0151,+0.0266]    0.598
+    step 0 - step 30               +0.0139   [-0.0086,+0.0354]    0.222
+    step 0 - step 40               +0.0143   [-0.0085,+0.0381]    0.228
+    step 0 - step 50               +0.0864   [+0.0611,+0.1111]    0.000  *
+    step 0 - step 60               +0.1631   [+0.1314,+0.1948]    0.000  *
+    step 0 - step 70               +0.2041   [+0.1702,+0.2397]    0.000  *
+    step 0 - step 80               +0.2069   [+0.1735,+0.2412]    0.000  *
+    step 0 - step 90               +0.1679   [+0.1329,+0.2033]    0.000  *
+    step 0 - step 99               +0.2209   [+0.1836,+0.2570]    0.000  *
+
+  Not distinguishable from step 0 through step 40: 4/4 contrasts. That is the flat window, tested rather than eyeballed.
+
   point estimate: break after step 50 (between 50 and 60)
 
   bootstrap distribution of the change-point:

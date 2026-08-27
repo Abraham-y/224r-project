@@ -74,6 +74,9 @@ _PROBE = os.path.join(_ROOT, "extension", "cache", "steering",
 # paper's central claim on the strength of the wrong label.
 LABEL_RULE = "last_block"
 
+# Last step the paper claims the monitor is still intact.
+FLAT_THROUGH = 40
+
 
 def load_checkpoint(run: str, step: int, layer: int):
     """(scores, labels, prompt_idx) for one checkpoint, or None if absent."""
@@ -228,6 +231,36 @@ def main() -> None:
     L.append("  flag rate.")
     L.append("")
 
+    # --- PAIRED tests. Checkpoints share the same 406 prompts, so the paired
+    # bootstrap is the right estimator; overlapping marginal CIs are not a test
+    # of a difference and are strictly less powerful.
+    L.append("  PAIRED AUROC differences (prompt-clustered, same prompts each side):")
+    L.append("")
+    L.append(f"    {'contrast':<26}{'delta':>9}{'95% CI':>22}{'p':>9}")
+    L.append("    " + "-" * 66)
+    rng2 = np.random.default_rng(args.seed)
+    paired_out = {}
+    for a, b in [(used[0], t) for t in used[1:]]:
+        d = np.empty(args.n_boot)
+        for i in range(args.n_boot):
+            dr = rng2.choice(prompts, size=len(prompts), replace=True)
+            ia = np.concatenate([idx[a][q] for q in dr])
+            ib = np.concatenate([idx[b][q] for q in dr])
+            d[i] = auroc(data[a][1][ia], data[a][0][ia]) - auroc(data[b][1][ib], data[b][0][ib])
+        lo_, hi_ = np.percentile(d, [2.5, 97.5])
+        p_ = 2 * min((d < 0).mean(), (d > 0).mean())
+        L.append(f"    step {a} - step {b:<15}{d.mean():>+9.4f}   "
+                 f"[{lo_:+.4f},{hi_:+.4f}]{p_:>9.3f}{'  *' if p_ < 0.05 else ''}")
+        paired_out[f"{a}-{b}"] = {"delta": float(d.mean()), "ci_lo": float(lo_),
+                                  "ci_hi": float(hi_), "p": float(p_)}
+    L.append("")
+    flat_ns = [k for k, v in paired_out.items()
+               if int(k.split("-")[1]) <= FLAT_THROUGH and v["p"] >= 0.05]
+    L.append(f"  Not distinguishable from step {used[0]} through step {FLAT_THROUGH}: "
+             f"{len(flat_ns)}/{sum(1 for t in used[1:] if t <= FLAT_THROUGH)} contrasts. "
+             "That is the flat window, tested rather than eyeballed.")
+    L.append("")
+
     k_hat = best_changepoint(point)
     L.append(f"  point estimate: break after step {used[k_hat - 1]} "
              f"(between {used[k_hat - 1]} and {used[k_hat]})")
@@ -267,6 +300,7 @@ def main() -> None:
     with open(p.replace(".txt", ".json"), "w") as f:
         json.dump({"run": args.run, "layer": args.layer, "steps": used,
                    "n_boot": args.n_boot, "per_step": per,
+                   "paired_auroc_diffs": paired_out,
                    "changepoint_point_estimate": int(used[k_hat - 1]),
                    "changepoint_modal": int(modal),
                    "changepoint_modal_share": float(kdist.max() / total),
