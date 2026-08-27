@@ -74,8 +74,10 @@ _PROBE = os.path.join(_ROOT, "extension", "cache", "steering",
 # paper's central claim on the strength of the wrong label.
 LABEL_RULE = "last_block"
 
-# Last step the paper claims the monitor is still intact.
+# Last step the paper claims the monitor is still intact, and the first step
+# at which its AUROC moves.
 FLAT_THROUGH = 40
+DROP_AT = 50
 
 
 def load_checkpoint(run: str, step: int, layer: int):
@@ -290,6 +292,45 @@ def main() -> None:
         L.append("  The change-point is NOT well identified -- no single location holds a")
         L.append("  majority. The lag should be quoted as a range, not a number.")
     L.append("")
+
+    # --- Is flag rate a USABLE label-free warning? Needs the control. --------
+    # Flag rate needs no ground truth, which is what makes it the only candidate
+    # available to a deployed evaluator. But "it moves" is not enough: healthy
+    # verifier-RL also pushes the policy's score distribution around, so the
+    # question is whether the attacked run leaves the band the CONTROL wanders in.
+    ctrl_dir = os.path.join(_ACTS, "vanilla_rloo_ladder")
+    if os.path.isdir(ctrl_dir):
+        cs = sorted(int(x) for x in os.listdir(ctrl_dir) if x.isdigit())
+        cflag = {}
+        for st in cs:
+            got = load_checkpoint("vanilla_rloo_ladder", st, args.layer)
+            if got is not None:
+                cflag[st] = float((got[0] >= thr).mean())
+        if len(cflag) >= 3:
+            c0 = cflag[min(cflag)]
+            crel = {k: v / c0 - 1 for k, v in cflag.items()}
+            band = max(abs(v) for v in crel.values())
+            a0f = per[used[0]]["flag_rate"]
+            arel = {k: per[k]["flag_rate"] / a0f - 1 for k in used}
+            first_out = next((k for k in used if arel[k] > band), None)
+            L.append("  FLAG RATE vs the verifier-RL control (label-free warning check)")
+            L.append("")
+            L.append(f"    control excursion band (max |rel. change|): +/-{100*band:.1f}%"
+                     f"   from {len(cflag)} checkpoints: "
+                     + ", ".join(f"{k}:{100*v:+.0f}%" for k, v in sorted(crel.items())))
+            L.append("    attacked run: "
+                     + ", ".join(f"{k}:{100*arel[k]:+.0f}%" for k in used))
+            L.append("")
+            if first_out is not None:
+                L.append(f"    leaves the control band at step {first_out}, and does not return;"
+                         f" AUROC's break is at {DROP_AT}.")
+                L.append(f"    => label-free lead over AUROC: ~{DROP_AT - first_out} steps.")
+            else:
+                L.append("    never leaves the control band: NOT a usable warning here.")
+            L.append("    Caveat: the control has only "
+                     f"{len(cflag)} checkpoints, so its band is loosely estimated;")
+            L.append("    treat the lead as indicative, not as a calibrated false-alarm rate.")
+            L.append("")
 
     txt = "\n".join(L)
     print(txt)

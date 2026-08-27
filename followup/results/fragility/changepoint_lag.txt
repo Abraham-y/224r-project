@@ -60,3 +60,13 @@ Change-point in the monitor's AUROC series
   The change-point is well identified: a majority of resamples put the
   break in the same place. Quoting '~50 steps' is supported.
 
+  FLAG RATE vs the verifier-RL control (label-free warning check)
+
+    control excursion band (max |rel. change|): +/-18.6%   from 5 checkpoints: 0:+0%, 30:+19%, 60:-7%, 90:+1%, 100:+5%
+    attacked run: 0:+0%, 10:+6%, 20:+12%, 30:+20%, 40:+38%, 50:+73%, 60:+95%, 70:+97%, 80:+98%, 90:+99%, 99:+99%
+
+    leaves the control band at step 30, and does not return; AUROC's break is at 50.
+    => label-free lead over AUROC: ~20 steps.
+    Caveat: the control has only 5 checkpoints, so its band is loosely estimated;
+    treat the lead as indicative, not as a calibrated false-alarm rate.
+
