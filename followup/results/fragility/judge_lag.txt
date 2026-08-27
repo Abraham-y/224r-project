@@ -1,0 +1,57 @@
+Does an LLM judge's AUROC lag too?
+  11 checkpoints: [0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 99]
+  judge scored against the exact Countdown verifier on each checkpoint's
+  own freshly sampled rollouts; prompt-clustered bootstrap (2000 resamples, seed 0)
+
+  NOTE: the policy was optimised against the PROBE, not against this judge.
+  The judge is a bystander watching the same drift. Report it that way.
+
+  operating threshold frozen at step 0 (median judge score) = 0.9991
+
+    step  judge AUROC  prec@thr  flag rate  true acc              95% CI
+  ------------------------------------------------------------------------
+       0        0.785     0.746      0.500     0.544      [0.757, 0.813]
+      10        0.784     0.703      0.481     0.495      [0.755, 0.812]
+      20        0.761     0.699      0.474     0.506      [0.729, 0.791]
+      30        0.754     0.679      0.465     0.488      [0.723, 0.783]
+      40        0.757     0.667      0.434     0.457      [0.726, 0.785]
+      50        0.778     0.631      0.373     0.399      [0.748, 0.806]
+      60        0.787     0.558      0.331     0.307      [0.757, 0.814]
+      70        0.790     0.524      0.304     0.268      [0.761, 0.818]
+      80        0.792     0.482      0.294     0.234      [0.761, 0.820]
+      90        0.775     0.448      0.312     0.232      [0.744, 0.806]
+      99        0.769     0.429      0.317     0.226      [0.737, 0.801]
+
+  change-point: best split after step 40   (38.6% of resamples agree)
+  NOT IDENTIFIED -- no location holds a majority. On this series the
+  judge's AUROC has no detectable break: treat it as flat, not as
+  breaking at the argmin of a fit that is forced to return one.
+
+    step  probe AUROC  judge AUROC
+  --------------------------------
+       0        0.783        0.785
+      10        0.777        0.784
+      20        0.778        0.761
+      30        0.769        0.754
+      40        0.768        0.757
+      50        0.696        0.778
+      60        0.620        0.787
+      70        0.579        0.790
+      80        0.576        0.792
+      90        0.615        0.775
+      99        0.562        0.769
+
+  probe break: after step 50   judge: no identified break
+
+  THE JUDGE'S AUROC NEVER DEGRADES. First and last checkpoints are
+  0.785 [0.757,0.813] and 0.769 [0.737,0.801] -- overlapping.
+  Its RANKING survives the whole collapse; the probe's does not.
+
+  But its precision at a frozen threshold falls 0.746 -> 0.429 (-42%),
+  against an AUROC change of -2%.
+  So AUROC is not a lagging indicator for this monitor -- it is a
+  NON-indicator. It would never have warned you at all, at any step,
+  while the fraction of flagged rollouts that are actually correct
+  nearly halved. That is a stronger form of the paper's claim than
+  the probe's 40-step lag, not a weaker one.
+

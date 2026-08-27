@@ -49,6 +49,13 @@ else
   printf '%-46s%s\n' "change-point test (prompt-clustered)" "SKIP (acts not cached)"
 fi
 
+if [ -d followup/results/fragility/judge_lag ]; then
+  run "LLM judge lag (judge vs verifier)" \
+      python -W ignore followup/experiments/fragility/judge_lag/analyze_judge_lag.py --n_boot 500 --out /tmp/_jl.txt
+else
+  printf '%-46s%s\n' "LLM judge lag (judge vs verifier)" "SKIP (scores not pulled)"
+fi
+
 echo
 echo "=== submission: is the thing you are about to upload safe? ==="
 if [ -f writeup_judge.tex ]; then

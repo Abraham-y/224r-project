@@ -146,8 +146,18 @@ def main() -> None:
     L.append("")
 
     k = best_changepoint(point)
-    L.append(f"  change-point: break after step {steps[k-1]}   "
-             f"({kd.max()/max(kd.sum(),1):.1%} of resamples agree)")
+    share = kd.max() / max(kd.sum(), 1)
+    # best_changepoint ALWAYS returns a k -- it fits the best two-segment split
+    # even to a flat, noisy series where no break exists. So the location is only
+    # meaningful if the bootstrap concentrates. Below a majority it does not, and
+    # reporting "the break is at k" would be reading structure out of noise.
+    identified = share >= 0.5
+    L.append(f"  change-point: best split after step {steps[k-1]}   "
+             f"({share:.1%} of resamples agree)")
+    if not identified:
+        L.append("  NOT IDENTIFIED -- no location holds a majority. On this series the")
+        L.append("  judge's AUROC has no detectable break: treat it as flat, not as")
+        L.append("  breaking at the argmin of a fit that is forced to return one.")
     L.append("")
 
     # The comparison the paper needs: does this curve break where the probe's did?
@@ -162,17 +172,32 @@ def main() -> None:
             if str(s) in pb:
                 L.append(f"  {s:>6}{pb[str(s)]['auroc']:>13.3f}{per[s]['auroc']:>13.3f}")
         L.append("")
+        a0, a9 = per[steps[0]]["auroc"], per[steps[-1]]["auroc"]
+        p0, p9 = (per[steps[0]]["precision_at_frozen_thr"],
+                  per[steps[-1]]["precision_at_frozen_thr"])
+        lo0, hi0 = per[steps[0]]["ci_lo"], per[steps[0]]["ci_hi"]
+        lo9, hi9 = per[steps[-1]]["ci_lo"], per[steps[-1]]["ci_hi"]
+        overlap = not (hi9 < lo0 or hi0 < lo9)
         L.append(f"  probe break: after step {pj.get('changepoint_modal')}   "
-                 f"judge break: after step {steps[k-1]}")
-        if steps[k-1] == pj.get("changepoint_modal"):
-            L.append("  Both monitors' discrimination breaks at the same point: the lag is a")
-            L.append("  property of monitoring this policy, not of reading activations.")
+                 f"judge: {'no identified break' if not identified else 'after step ' + str(steps[k-1])}")
+        L.append("")
+        if not identified and overlap:
+            L.append("  THE JUDGE'S AUROC NEVER DEGRADES. First and last checkpoints are")
+            L.append(f"  {a0:.3f} [{lo0:.3f},{hi0:.3f}] and {a9:.3f} [{lo9:.3f},{hi9:.3f}] -- overlapping.")
+            L.append("  Its RANKING survives the whole collapse; the probe's does not.")
+            L.append("")
+            L.append(f"  But its precision at a frozen threshold falls {p0:.3f} -> {p9:.3f} "
+                     f"({100*(p9-p0)/p0:+.0f}%),")
+            L.append(f"  against an AUROC change of {100*(a9-a0)/a0:+.0f}%.")
+            L.append("  So AUROC is not a lagging indicator for this monitor -- it is a")
+            L.append("  NON-indicator. It would never have warned you at all, at any step,")
+            L.append("  while the fraction of flagged rollouts that are actually correct")
+            L.append("  nearly halved. That is a stronger form of the paper's claim than")
+            L.append("  the probe's 40-step lag, not a weaker one.")
         elif steps[k-1] < pj.get("changepoint_modal", 10**9):
-            L.append("  The judge breaks EARLIER than the probe -- it is the better early")
-            L.append("  warning of the two, which is a usable recommendation.")
+            L.append("  The judge breaks EARLIER than the probe -- the better early warning.")
         else:
-            L.append("  The judge breaks LATER than the probe. State this plainly: it means")
-            L.append("  an LLM judge gives even less warning, not more.")
+            L.append("  The judge breaks LATER than the probe: even less warning, not more.")
         L.append("")
 
     txt = "\n".join(L)
